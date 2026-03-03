@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState , useMemo} from 'react';
 import { StyleSheet, View, Text, ScrollView } from 'react-native'; // Added Text/ScrollView for basic display
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, Stack } from 'expo-router';
@@ -6,7 +6,10 @@ import Screenheader from '@/components/Screenheader.component';
 import { getChapterText, parseEpub } from '@/utils/epubparser';
 import JSZip from 'jszip';
 import { File } from 'expo-file-system';
+import RenderHTML from 'react-native-render-html';
+import { Dimensions } from 'react-native';
 
+const { width } = Dimensions.get('window');
 export default function Reader() {
   const params = useLocalSearchParams<{ 
     title?: string; 
@@ -17,10 +20,66 @@ export default function Reader() {
   }>();
 
   const [bookData, setBookData] = useState<any>(null);
-  const [currentChapterNo, setCurrentChapterNo] = useState(0);
+  const [currentChapterNo, setCurrentChapterNo] = useState(20);
   const [zipInstance, setZipInstance] = useState<JSZip | null>(null); // Initialized to null
   const [currentHtml, setCurrentHtml] = useState<string>(''); // Added state to hold the text
-
+  const tagsStyles = useMemo(() => ({
+    body: {
+      color: '#E0E0E0',
+      fontSize: 18,
+      lineHeight: 26,
+      fontFamily: 'Georgia',
+    },
+    h1: {
+      color: '#FFFFFF',
+      marginBottom: 20,
+    },
+       h5: {
+      color: '#FFFFFF',
+      marginBottom: 20,
+    },
+    p: {
+      marginBottom: 15,
+    }
+  }), []);
+  const classesStyles = {
+  // Main container style
+  calibre: {
+    paddingHorizontal: 5,
+  },
+  // Links/Interactions
+  calibre1: {
+    color: '#3498db',
+    textDecorationLine: 'underline',
+  },
+  calibre3: {
+    fontStyle: 'italic',
+  },
+  calibre4: {
+    fontWeight: 'bold',
+  },
+  // Paragraph variants (The 'p' classes)
+  p: {
+    textAlign: 'justify',
+    fontSize: 18,
+    lineHeight: 26,
+    marginBottom: 10,
+  },
+  p3: {
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  p6: {
+    fontWeight: 'bold',
+    textAlign: 'justify',
+  },
+  // Text size/weight spans (The 't' classes)
+  t: { fontSize: 18 },
+  t2: { fontSize: 24, fontWeight: 'bold' },
+  t4: { fontSize: 28, fontWeight: 'bold', fontFamily: 'Georgia' },
+  t12: { fontSize: 12 },
+  t14: { fontWeight: 'bold' },
+} as const;
   // 1. Handle Lifecycle (Mount/Unmount)
   useEffect(() => {
     console.log('Reader opened with Params:', params);
@@ -76,10 +135,16 @@ export default function Reader() {
 
       <View style={styles.content} >
         <ScrollView>
-          <Text style={{ color: 'white' }}>
-            {/* Display the state variable, not the function call */}
-            {currentHtml || "Loading chapter..."}
-          </Text>
+          <RenderHTML
+            contentWidth={width}
+            source={{ html: currentHtml }}
+            classesStyles={classesStyles}
+            tagsStyles={tagsStyles}
+
+            // This is key for your audiobook: it ignores 
+            // the hardcoded styles from the EPUB file
+            // enableCSSInlineProcessing={false} 
+          />
         </ScrollView>
       </View>
     </SafeAreaView>
