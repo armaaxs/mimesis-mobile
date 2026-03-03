@@ -1,0 +1,72 @@
+The reason your app is breaking is that `forEach` is **synchronous and "fire-and-forget."** When you run `segments.forEach`, the app tries to start 50 different audio streams at the exact same millisecond. Your phone’s CPU spikes, the audio buffer overflows, and the app crashes.
+
+To fix this for **Mimesis**, you need to switch from a "Shotgun" approach to a **"Sequential Queue."**
+
+### 1. The Quick Fix: `for...of`
+
+The simplest way to fix this in TypeScript is to use a `for...of` loop. Unlike `forEach`, it will actually respect the `await` keyword and wait for one chunk to finish before starting the next.
+
+```typescript
+// wrap this in an async function
+const processBook = async () => {
+    for (const chunk of segments) {
+        console.log(`Processing: ${chunk.slice(0, 20)}...`);
+        
+        // This will now WAIT until the stream is 'done' before moving to the next
+        await generateStream(chunk); 
+    }
+    console.log("Book finished!");
+};
+
+```
+
+### 2. The "Pro" Fix: The Sequential Queue
+
+If you want a truly smooth experience (like Audible), you don't want to wait for a chunk to *finish playing* before you start *generating* the next one. You want to generate chunk #2 while the user is still listening to chunk #1.
+
+Here is a logic pattern for a **Play-Ahead Queue**:
+
+```typescript
+class SpeechQueue {
+    private queue: string[] = [];
+    private isPlaying: boolean = false;
+
+    async addToQueue(chunks: string[]) {
+        this.queue.push(...chunks);
+        if (!this.isPlaying) {
+            this.playNext();
+        }
+    }
+
+    private async playNext() {
+        if (this.queue.length === 0) {
+            this.isPlaying = false;
+            return;
+        }
+
+        this.isPlaying = true;
+        const currentChunk = this.queue.shift();
+
+        if (currentChunk) {
+            // 1. Highlight the text in the UI
+            updateUIHighlight(currentChunk);
+
+            // 2. Play the audio and wait for it to finish
+            await generateStream(currentChunk);
+
+            // 3. Recurse to the next item
+            this.playNext();
+        }
+    }
+}
+
+```
+
+### Why this matters for your 2026 Pitch:
+
+* **The "Wait Time" Problem:** If you use the basic `for...of` loop, there will be a tiny 0.5s silence between every paragraph while the next chunk generates. This feels "cheap."
+* **The "Buffer" Strategy:** By using a Queue, you can tell your app to **pre-generate** the next 2 chunks in the background. This creates "Zero Latency" playback, which is how you compete with ElevenLabs' polished UI.
+
+### Next Step for you:
+
+Are you using **React Native** or **Flutter** for the frontend? I can give you the specific code to handle the **"onEnd"** event of the audio player so the next chunk starts the instant the first one hits the last millisecond.

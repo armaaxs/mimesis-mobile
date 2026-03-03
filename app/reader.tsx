@@ -12,6 +12,32 @@ import BottomSheet, { BottomSheetFlatList } from '@gorhom/bottom-sheet'; // New 
 import { GestureHandlerRootView } from 'react-native-gesture-handler'; // New Import
 import ChapterIndex from './bookIndex'; // Importing the ChapterIndex component
 const { width } = Dimensions.get('window');
+import TTSButton from './tts';
+
+const extractRawText = (html: string): string => {
+  if (!html) return "";
+
+  return html
+    // 1. Remove script and style elements and their content
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
+    // 2. Replace common block-level tags with newlines to preserve spacing
+    .replace(/<(p|br|h1|h2|h3|h4|h5|h6|div|li)[^>]*>/gi, "\n")
+    // 3. Strip all remaining HTML tags
+    .replace(/<[^>]+>/g, " ")
+    // 4. Decode common HTML entities
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&mdash;/g, "—")
+    // 5. Clean up whitespace (remove double spaces and excessive newlines)
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n/g, "\n")
+    .trim();
+};
+
+
 
 export default function Reader() {
   const router = useRouter();
@@ -89,7 +115,6 @@ export default function Reader() {
   const handleIndexOpen = () => {
     bottomSheetRef.current?.expand(); // Open the sheet instead of navigating
   };
-
 return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View style={styles.mainWrapper}>
@@ -108,12 +133,9 @@ return (
               </ScrollView>
            </View>
         </SafeAreaView>
-
         <View style={styles.staticTab}>
           <View style={styles.topRow}>
-            <TouchableOpacity onPress={() => {}}>
-              <Ionicons name="play-back" size={24} color="#fff" />
-            </TouchableOpacity>
+            <TTSButton text={(extractRawText(currentHtml))} />
             <TouchableOpacity onPress={handleIndexOpen}>
               <Ionicons name="menu" size={24} color="#fff" />
             </TouchableOpacity>
