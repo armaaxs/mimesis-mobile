@@ -90,3 +90,93 @@ Fix implemented:
   - native model generation stop + busy retry handling.
 - Validation after rewrite:
   - `npm run lint -- app/tts.tsx` passes.
+
+---
+
+## Recent Updates (Import Pipeline + Reader Refactor)
+
+### Scope
+Implemented a new import-first architecture so EPUB metadata/content is extracted once at import time, persisted as a `Book` domain object, and reused by Reader. Also upgraded chapter-title hydration from EPUB TOC (EPUB2 + EPUB3) and refined reader UI behavior.
+
+### What Was Implemented
+
+#### 1) Domain model + persistence layer
+- Added `models/Book.ts` with:
+  - `Book` class
+  - `BookDTO`, `BookChapterDTO`, `LibraryBookItem`
+  - `fromImport`, `fromDTO`, `toDTO`, `toLibraryItem`
+- Added `utils/bookRepository.ts`:
+  - storage dir: `Paths.document/mimesis-books`
+  - catalog file: `catalog.json`
+  - per-book file: `${bookId}.json`
+  - APIs: `saveBook`, `getBookById`, `getBookByUri`, `listBookCatalog`
+
+#### 2) Import-time EPUB extraction (single-pass)
+- Extended `utils/epubparser.ts` with `extractEpubImportPayload(zip)` that extracts:
+  - `title`, `author`
+  - `cover` (metadata/manifest/guide strategies)
+  - chapter list in spine order
+  - chapter `html` + derived `plainText`
+- Added shared HTML-to-text utility in `utils/extractRawText.ts`.
+
+#### 3) TOC title extraction (EPUB2 + EPUB3)
+- Added TOC parsing for:
+  - EPUB2 NCX (`application/x-dtbncx+xml`)
+  - EPUB3 nav docs (`properties="nav"`)
+- Added href normalization/matching so TOC labels map reliably to spine chapters.
+- Persisted chapter `title` in chapter DTOs.
+
+#### 4) Library import flow refactor
+- Updated `app/(tabs)/index.tsx` import pipeline:
+  - pick/copy file (existing behavior)
+  - parse zip + extract payload
+  - create `Book` instance
+  - persist via repository
+  - prepend hydrated library card from persisted data
+- Library now hydrates persisted catalog on mount.
+
+#### 5) Reader data-source migration (persisted-first)
+- Updated `app/reader.tsx` to:
+  - resolve persisted book by `id`, fallback by `uri`
+  - load chapter content from persisted `chapters[]` when available
+  - fallback to legacy runtime zip parsing only if persisted data is missing
+
+#### 6) Reader UX updates
+- Added cover-first reader mode (Spotify-like):
+  - open on cover
+  - tap cover to enter text mode
+  - in-view Back button returns to cover mode
+- Added animated transition between cover/text modes using `Animated.spring`.
+
+#### 7) Chapter index title hydration in Reader
+- Updated reader chapter menu input so it prefers extracted chapter titles.
+- Added robust fallback title generation in `reader.tsx`:
+  1. extracted `chapter.title`
+  2. first non-empty line from chapter text
+  3. cleaned filename from `href`
+  4. `Chapter X`
+
+### Validation Performed
+- File diagnostics for changed files: no errors.
+- Lint run: `npm run lint`
+  - passes with existing unrelated warnings in `app/(tabs)/explore.tsx`.
+
+### Documentation
+- Added `architecture.md` with complete end-to-end pipeline:
+  - file selection/import
+  - EPUB parsing/TOC/cover extraction
+  - persistence model
+  - reader hydration and chapter flow
+  - chunking, queue playback, and WAV export path
+
+### Files Added
+- `models/Book.ts`
+- `utils/bookRepository.ts`
+- `utils/extractRawText.ts`
+- `architecture.md`
+
+### Files Updated
+- `app/(tabs)/index.tsx`
+- `app/reader.tsx`
+- `utils/epubparser.ts`
+- `progress.md` (this file)

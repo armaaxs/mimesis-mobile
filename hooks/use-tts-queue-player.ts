@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AudioContext } from 'react-native-audio-api';
 import {
   KOKORO_MEDIUM,
-  KOKORO_VOICE_AF_HEART,
+  KOKORO_VOICE_AM_MICHAEL,
+  KOKORO_VOICE_AM_SANTA,
   useTextToSpeech,
 } from 'react-native-executorch';
 import { chunkText } from '../utils/chunkText';
@@ -92,7 +93,7 @@ export function useTTSQueuePlayer({
 }: UseTTSQueuePlayerOptions): UseTTSQueuePlayerResult {
   const tts = useTextToSpeech({
     model: KOKORO_MEDIUM,
-    voice: KOKORO_VOICE_AF_HEART,
+    voice: KOKORO_VOICE_AM_MICHAEL,
   });
 
   const ttsRef = useRef(tts);

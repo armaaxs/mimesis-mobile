@@ -11,6 +11,11 @@ type ChunkSeekerProps = {
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
+// Constants for easy adjustment
+const TRACK_HEIGHT = 20; // Taller area for easier finger grabbing
+const BAR_HEIGHT = 4;    // The actual visible line thickness
+const KNOB_SIZE = 14;
+
 export default function ChunkSeeker({
   progress,
   currentChunk,
@@ -27,7 +32,6 @@ export default function ChunkSeeker({
     if (disabled || trackWidth <= 0) {
       return null;
     }
-
     return clamp(xPosition / trackWidth, 0, 1);
   }, [disabled, trackWidth]);
 
@@ -36,21 +40,15 @@ export default function ChunkSeeker({
     onMoveShouldSetPanResponder: () => !disabled,
     onPanResponderGrant: (event) => {
       const nextProgress = progressWithPosition(event.nativeEvent.locationX);
-      if (nextProgress !== null) {
-        setDragProgress(nextProgress);
-      }
+      if (nextProgress !== null) setDragProgress(nextProgress);
     },
     onPanResponderMove: (event) => {
       const nextProgress = progressWithPosition(event.nativeEvent.locationX);
-      if (nextProgress !== null) {
-        setDragProgress(nextProgress);
-      }
+      if (nextProgress !== null) setDragProgress(nextProgress);
     },
     onPanResponderRelease: (event) => {
       const nextProgress = progressWithPosition(event.nativeEvent.locationX);
-      if (nextProgress !== null) {
-        onSeek(nextProgress);
-      }
+      if (nextProgress !== null) onSeek(nextProgress);
       setDragProgress(null);
     },
     onPanResponderTerminate: () => {
@@ -66,13 +64,25 @@ export default function ChunkSeeker({
         <Text style={styles.text}>{totalChunks > 0 ? `${currentChunk + 1}` : '0'}</Text>
         <Text style={styles.text}>{totalChunks}</Text>
       </View>
+
       <View
         style={styles.track}
         onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
         {...panResponder.panHandlers}
       >
+        {/* Unfilled Background Line */}
+        <View style={styles.unfilledTrack} />
+
+        {/* Filled Progress Line */}
         <View style={[styles.filledTrack, { width: `${displayedProgress * 100}%` }]} />
-        <View style={[styles.knob, { left: knobLeft - 7 }]} />
+
+        {/* Interaction Knob */}
+        <View 
+          style={[
+            styles.knob, 
+            { left: knobLeft - KNOB_SIZE / 2 }
+          ]} 
+        />
       </View>
     </View>
   );
@@ -88,7 +98,7 @@ const styles = StyleSheet.create({
     opacity: 0.45,
   },
   row: {
-    marginBottom: 6,
+    marginBottom: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -98,23 +108,39 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   track: {
-    height: 16,
-    justifyContent: 'center',
+    height: TRACK_HEIGHT,
+    justifyContent: 'center', // This handles vertical centering of all absolute children
     position: 'relative',
+    width: '100%',
+  },
+  unfilledTrack: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: BAR_HEIGHT,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: BAR_HEIGHT / 2,
   },
   filledTrack: {
     position: 'absolute',
     left: 0,
-    top: 7,
-    height: 2,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 2,
+    height: BAR_HEIGHT,
+    backgroundColor: '#0099a1',
+    borderRadius: BAR_HEIGHT / 2,
+    zIndex: 1, // Ensure it stays above unfilled
   },
   knob: {
     position: 'absolute',
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#FFFFFF',
+    width: KNOB_SIZE,
+    height: KNOB_SIZE,
+    borderRadius: KNOB_SIZE / 2,
+    backgroundColor: '#0099a1',
+    zIndex: 2, // Ensure it stays above filled track
+    // Shadow for depth (optional but recommended for sleekness)
+    shadowColor: '#ff4444',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 3,
   },
 });

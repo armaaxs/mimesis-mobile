@@ -2,10 +2,15 @@ import React from 'react';
 import { StyleSheet, Text, View, FlatList, ViewStyle, TextStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { BookCard, Book } from '../../components/BookCard.components';
+import { BookCard, Book as LibraryBook } from '../../components/BookCard.components';
 import { AddBookCard } from '../../components/AddBookCard.component';
+import { File } from 'expo-file-system';
+import JSZip from 'jszip';
+import { Book } from '@/models/Book';
+import { listBookCatalog, saveBook } from '@/utils/bookRepository';
+import { extractEpubImportPayload } from '@/utils/epubparser';
 
-const BOOKS: Book[] = [
+const BOOKS: LibraryBook[] = [
   { id: '1', title: 'Stoner', author: 'John Williams', cover: null , uri:''},
   { id: '2', title: 'A Little Life', author: 'Hanya Yanagihara', cover: 'https://covers.openlibrary.org/b/id/12625292-L.jpg', uri:'' },
   { id: '3', title: 'The Goldfinch', author: 'Donna Tartt', cover: 'https://covers.openlibrary.org/b/id/12068222-L.jpg', uri:'' },
@@ -14,6 +19,7 @@ const BOOKS: Book[] = [
 
 export default function LibraryScreen() {
   const router = useRouter();
+  const [books, setBooks] = React.useState<LibraryBook[]>(BOOKS);
 
   const renderHeader = () => (
     <View style={styles.header}>
@@ -23,19 +29,44 @@ export default function LibraryScreen() {
     </View>
   );
 
-  const [books, setBooks] = React.useState(BOOKS);
-  const handleBookAdded = (uri: string, name: string) => {
-    const newBook = {
-      id: Math.random().toString(), // Generate real IDs in production
-      title: name.replace('.epub', ''),
-      author: 'Local Upload',
-      cover: null,
-      uri: uri // Pass this to your Manual Reader later
+  React.useEffect(() => {
+    const hydrateImportedBooks = async () => {
+      const importedBooks = await listBookCatalog();
+      setBooks([...importedBooks, ...BOOKS]);
     };
-    setBooks([newBook, ...books]);
+
+    void hydrateImportedBooks();
+  }, []);
+
+  const handleBookAdded = async (uri: string, name: string) => {
+    try {
+      const file = new File(uri);
+      const base64Data = await file.base64();
+      const loadedZip = await JSZip.loadAsync(base64Data, { base64: true });
+      const importedPayload = await extractEpubImportPayload(loadedZip);
+
+      const importedBook = Book.fromImport({
+        title: importedPayload.title || name.replace('.epub', ''),
+        author: importedPayload.author || 'Local Upload',
+        cover: importedPayload.cover,
+        uri,
+        basePath: importedPayload.basePath,
+        chapters: importedPayload.chapters,
+      });
+
+      await saveBook(importedBook);
+
+      const libraryBook = importedBook.toLibraryItem();
+      setBooks((previousBooks) => [
+        libraryBook,
+        ...previousBooks.filter((book) => book.id !== libraryBook.id),
+      ]);
+    } catch (error) {
+      console.error('Import pipeline failed:', error);
+    }
   };
 
-  const handleBookPress = (book: Book) => {
+  const handleBookPress = (book: LibraryBook) => {
     router.push({pathname: '/reader', params: { ...book }});
   }
 
@@ -68,7 +99,7 @@ export default function LibraryScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#050505',
+    backgroundColor: '#000000',
   } as ViewStyle,
   header: {
     marginTop: 20,
