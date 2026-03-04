@@ -1,3 +1,14 @@
+
+
+
+
+
+
+
+
+
+
+--------------------------- old, ignore
 The reason your app is breaking is that `forEach` is **synchronous and "fire-and-forget."** When you run `segments.forEach`, the app tries to start 50 different audio streams at the exact same millisecond. Your phone’s CPU spikes, the audio buffer overflows, and the app crashes.
 
 To fix this for **Mimesis**, you need to switch from a "Shotgun" approach to a **"Sequential Queue."**

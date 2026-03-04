@@ -1,19 +1,21 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react'; // Added useRef
-import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
+import ChunkSeeker from '@/components/ChunkSeeker.component';
+import DownloadOverlay from '@/components/DownloadOverlay.component';
 import Screenheader from '@/components/Screenheader.component';
+import { useTTSQueuePlayer } from '@/hooks/use-tts-queue-player';
 import { getChapterText, parseEpub } from '@/utils/epubparser';
-import JSZip from 'jszip';
-import { File } from 'expo-file-system';
-import RenderHTML from 'react-native-render-html';
 import { Ionicons } from '@expo/vector-icons';
-import BottomSheet, { BottomSheetFlatList } from '@gorhom/bottom-sheet'; // New Import
+import BottomSheet from '@gorhom/bottom-sheet'; // New Import
+import { File } from 'expo-file-system';
+import { Stack, useLocalSearchParams } from 'expo-router';
+import JSZip from 'jszip';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'; // Added useRef
+import { ActivityIndicator, Dimensions, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler'; // New Import
+import RenderHTML from 'react-native-render-html';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import ChapterIndex from './bookIndex'; // Importing the ChapterIndex component
-const { width } = Dimensions.get('window');
-import TTSButton from './tts';
 
+const { width } = Dimensions.get('window');
 const extractRawText = (html: string): string => {
   if (!html) return "";
 
@@ -40,7 +42,6 @@ const extractRawText = (html: string): string => {
 
 
 export default function Reader() {
-  const router = useRouter();
   const params = useLocalSearchParams<{ 
     title?: string; 
     id?: string; 
@@ -84,7 +85,7 @@ export default function Reader() {
     return () => console.log('Reader component destroyed');
   }, []);
 
-  const loadBook = async () => {
+  const loadBook = useCallback(async () => {
     if (params.uri) {
       try {
         const file = new File(params.uri);
@@ -97,9 +98,11 @@ export default function Reader() {
         console.error("Failed to parse in Reader:", err);
       }
     }
-  };
+  }, [params.uri]);
 
-  useEffect(() => { loadBook(); }, [params.uri]);
+  useEffect(() => {
+    void loadBook();
+  }, [loadBook]);
 
   useEffect(() => {
     const fetchText = async () => {
@@ -115,6 +118,37 @@ export default function Reader() {
   const handleIndexOpen = () => {
     bottomSheetRef.current?.expand(); // Open the sheet instead of navigating
   };
+
+  const rawChapterText = useMemo(() => extractRawText(currentHtml), [currentHtml]);
+
+  const {
+    isPlaying,
+    isDownloading,
+    currentChunkIndex,
+    totalChunks,
+    seekToChunk,
+    downloadCurrentTextWithPicker,
+    togglePlayPause,
+  } = useTTSQueuePlayer({
+    text: rawChapterText,
+    chunkSize: 200,
+  });
+
+  const controlsDisabled = !!isDownloading;
+  const seekerProgress = totalChunks <= 1 ? 0 : currentChunkIndex / (totalChunks - 1);
+
+  const handleSeek = useCallback((progress: number) => {
+    if (controlsDisabled || totalChunks <= 0) {
+      return;
+    }
+
+    const nextChunkIndex = Math.round(progress * Math.max(totalChunks - 1, 0));
+    void seekToChunk(nextChunkIndex);
+  }, [controlsDisabled, seekToChunk, totalChunks]);
+
+  
+
+
 return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View style={styles.mainWrapper}>
@@ -134,19 +168,32 @@ return (
            </View>
         </SafeAreaView>
         <View style={styles.staticTab}>
+          <ChunkSeeker
+            progress={seekerProgress}
+            currentChunk={currentChunkIndex}
+            totalChunks={totalChunks}
+            disabled={controlsDisabled || totalChunks === 0}
+            onSeek={handleSeek}
+          />
           <View style={styles.topRow}>
-            <TTSButton text={(extractRawText(currentHtml))} />
-            <TouchableOpacity onPress={handleIndexOpen}>
+            <TouchableOpacity onPress={downloadCurrentTextWithPicker} disabled={controlsDisabled} style={[styles.iconButton, controlsDisabled && styles.disabled]}>
+              <Ionicons name={isDownloading ? 'sync' : 'download'} size={24} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleIndexOpen} disabled={controlsDisabled} style={[styles.iconButton, controlsDisabled && styles.disabled]}>
               <Ionicons name="menu" size={24} color="#fff" />
             </TouchableOpacity>
           </View>
           <View style={styles.divider} />
           <View style={styles.bottomRow}>
-            <TouchableOpacity style={styles.playButton} onPress={() => {}}>
-              <Ionicons name="pause-circle" size={50} color="#fff" />
+            <TouchableOpacity style={[styles.playButton, controlsDisabled && styles.disabled]} onPress={togglePlayPause} disabled={controlsDisabled}>
+              {isDownloading ? (
+                <ActivityIndicator size="large" color="#fff" />
+              ) : (
+                <Ionicons name={isPlaying ? 'pause' : 'play'} size={50} color="#fff" />
+              )}
             </TouchableOpacity>
           </View>
-        </View>
+        </View> 
 
         {/* REFACTORED BOTTOM SHEET SECTION */}
         <BottomSheet
@@ -166,6 +213,7 @@ return (
             }}
           />
         </BottomSheet>
+        <DownloadOverlay visible={isDownloading} onClose={() => {}} message="Saving to Downloads... Please be patient." />
       </View>
     </GestureHandlerRootView>
   );
@@ -181,14 +229,17 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: '15%',
+    height: 150,
     backgroundColor: '#050505cb',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    paddingTop: 15,
+    paddingTop: 8,
   },
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: 10 },
   divider: { height: 1, backgroundColor: '#414141', width: '100%', marginBottom: -20 },
   bottomRow: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   playButton: { marginTop: -5 },
+  iconButton: { padding: 8 },
+  disabled: { opacity: 0.45 },
+  
 });
