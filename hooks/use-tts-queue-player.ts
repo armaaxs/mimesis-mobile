@@ -38,6 +38,7 @@ export type UseTTSQueuePlayerOptions = {
   chunkPauseMs?: number;
   playbackPrefetchAheadChunks?: number;
   playbackKeepBehindChunks?: number;
+  queueTargetMemoryMB?: number;
 };
 
 export type TTSMemoryStats = {
@@ -53,6 +54,7 @@ export type UseTTSQueuePlayerResult = {
   isPlaying: boolean;
   isPaused: boolean;
   isDownloading: boolean;
+  chunkTexts: string[];
   currentChunkIndex: number;
   totalChunks: number;
   memoryStats: TTSMemoryStats;
@@ -84,8 +86,9 @@ export function useTTSQueuePlayer({
   text,
   chunkSize = 200,
   chunkPauseMs = 140,
-  playbackPrefetchAheadChunks = 3,
-  playbackKeepBehindChunks = 1,
+  playbackPrefetchAheadChunks = 40,
+  playbackKeepBehindChunks = 20,
+  queueTargetMemoryMB = 96,
 }: UseTTSQueuePlayerOptions): UseTTSQueuePlayerResult {
   const tts = useTextToSpeech({
     model: KOKORO_MEDIUM,
@@ -99,6 +102,7 @@ export function useTTSQueuePlayer({
   const [isPlaying, setIsPlaying] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [chunkTextsState, setChunkTextsState] = useState<string[]>([]);
   const [currentChunkIndex, setCurrentChunkIndex] = useState(0);
   const [totalChunks, setTotalChunks] = useState(0);
   const [memoryStats, setMemoryStats] = useState<TTSMemoryStats>({
@@ -145,11 +149,19 @@ export function useTTSQueuePlayer({
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
   }, []);
 
+  const queueTargetBytes = Math.max(8, queueTargetMemoryMB) * 1024 * 1024;
+
   const normalizeChunks = useCallback((inputText: string) => {
     return chunkText(inputText, chunkSize)
       .map((chunkValue) => chunkValue.trim())
       .filter((chunkValue) => chunkValue.length > 0);
   }, [chunkSize]);
+
+  const setPreparedChunks = useCallback((chunks: string[]) => {
+    runtimeRef.current.chunkTexts = chunks;
+    setChunkTextsState(chunks);
+    setTotalChunks(chunks.length);
+  }, []);
 
   const updateMemoryStats = useCallback(() => {
     const runtime = runtimeRef.current;
@@ -358,17 +370,19 @@ export function useTTSQueuePlayer({
     return runtimeRef.current.audioQueue[chunkIndex] ?? null;
   }, [sleep]);
 
-  const pruneAudioQueueWindow = useCallback((sessionId: number) => {
+  const pruneAudioQueueWindow = useCallback((sessionId: number, centerChunkIndex?: number) => {
     const runtime = runtimeRef.current;
 
     if (runtime.sessionId !== sessionId) {
       return;
     }
 
-    const minChunkToKeep = Math.max(0, runtime.currentChunkIndex - playbackKeepBehindChunks);
+    const anchorChunkIndex = centerChunkIndex ?? runtime.currentChunkIndex;
+
+    const minChunkToKeep = Math.max(0, anchorChunkIndex - playbackKeepBehindChunks);
     const maxChunkToKeep = Math.min(
       runtime.chunkTexts.length - 1,
-      runtime.currentChunkIndex + playbackPrefetchAheadChunks,
+      anchorChunkIndex + playbackPrefetchAheadChunks,
     );
 
     let removedAny = false;
@@ -380,10 +394,39 @@ export function useTTSQueuePlayer({
       }
     }
 
+    const queuedBytes = () => {
+      return Object.values(runtime.audioQueue)
+        .reduce((sum, chunkAudio) => sum + (chunkAudio.length * Float32Array.BYTES_PER_ELEMENT), 0);
+    };
+
+    if (queuedBytes() > queueTargetBytes) {
+      const queueIndices = Object.keys(runtime.audioQueue)
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value))
+        .sort((left, right) => {
+          const leftDistance = Math.abs(left - anchorChunkIndex);
+          const rightDistance = Math.abs(right - anchorChunkIndex);
+          return rightDistance - leftDistance;
+        });
+
+      for (const queueIndex of queueIndices) {
+        if (queuedBytes() <= queueTargetBytes) {
+          break;
+        }
+
+        if (queueIndex >= minChunkToKeep && queueIndex <= maxChunkToKeep) {
+          continue;
+        }
+
+        delete runtime.audioQueue[queueIndex];
+        removedAny = true;
+      }
+    }
+
     if (removedAny) {
       updateMemoryStats();
     }
-  }, [playbackKeepBehindChunks, playbackPrefetchAheadChunks, updateMemoryStats]);
+  }, [playbackKeepBehindChunks, playbackPrefetchAheadChunks, queueTargetBytes, updateMemoryStats]);
 
   const playAudioBuffer = useCallback(async (audioData: Float32Array) => {
     const context = audioContextRef.current;
@@ -573,6 +616,7 @@ export function useTTSQueuePlayer({
     runtime.nextChunkToGenerate = 0;
     runtime.totalGeneratedSamples = 0;
     runtime.currentChunkIndex = 0;
+    setChunkTextsState([]);
     setCurrentChunkIndex(0);
     setTotalChunks(0);
 
@@ -704,8 +748,7 @@ export function useTTSQueuePlayer({
       runtimeRef.current.sessionId = nextSessionId;
 
       const chunks = normalizeChunks(text);
-      runtimeRef.current.chunkTexts = chunks;
-      setTotalChunks(chunks.length);
+      setPreparedChunks(chunks);
 
       if (chunks.length === 0) {
         setPlayerState({ isPlaying: false, isPaused: false });
@@ -731,7 +774,7 @@ export function useTTSQueuePlayer({
     } finally {
       runtimeRef.current.isStarting = false;
     }
-  }, [generateQueue, normalizeChunks, playQueue, setPlayerState, stopGenerationAndWait, text, updateMemoryStats, waitForModelReady]);
+  }, [generateQueue, normalizeChunks, playQueue, setPlayerState, setPreparedChunks, stopGenerationAndWait, text, updateMemoryStats, waitForModelReady]);
 
   const pause = useCallback(() => {
     setPlayerState({ isPlaying: false, isPaused: true });
@@ -743,8 +786,7 @@ export function useTTSQueuePlayer({
 
     if (runtime.chunkTexts.length === 0) {
       const chunks = normalizeChunks(text);
-      runtime.chunkTexts = chunks;
-      setTotalChunks(chunks.length);
+      setPreparedChunks(chunks);
     }
 
     if (runtime.chunkTexts.length === 0) {
@@ -762,7 +804,7 @@ export function useTTSQueuePlayer({
 
     void generateQueue(sessionId);
     void playQueue(sessionId);
-  }, [generateQueue, normalizeChunks, playQueue, setPlayerState, text, updateMemoryStats]);
+  }, [generateQueue, normalizeChunks, playQueue, setPlayerState, setPreparedChunks, text, updateMemoryStats]);
 
   const togglePlayPause = useCallback(async () => {
     if (playerStateRef.current.isPaused) {
@@ -783,8 +825,7 @@ export function useTTSQueuePlayer({
 
     if (runtime.chunkTexts.length === 0) {
       const chunks = normalizeChunks(text);
-      runtime.chunkTexts = chunks;
-      setTotalChunks(chunks.length);
+      setPreparedChunks(chunks);
     }
 
     if (runtime.chunkTexts.length === 0) {
@@ -808,12 +849,11 @@ export function useTTSQueuePlayer({
     runtime.sessionId = nextSessionId;
     runtime.currentChunkIndex = nextChunkIndex;
     runtime.generationDone = false;
-    runtime.audioQueue = {};
-    runtime.nextChunkToGenerate = nextChunkIndex;
-    runtime.totalGeneratedSamples = 0;
+    runtime.nextChunkToGenerate = Math.min(runtime.nextChunkToGenerate, nextChunkIndex);
 
     setCurrentChunkIndex(nextChunkIndex);
     setTotalChunks(runtime.chunkTexts.length);
+    pruneAudioQueueWindow(nextSessionId, nextChunkIndex);
     updateMemoryStats();
 
     void generateQueue(nextSessionId);
@@ -821,7 +861,7 @@ export function useTTSQueuePlayer({
     if (playerStateRef.current.isPlaying && !playerStateRef.current.isPaused) {
       void playQueue(nextSessionId);
     }
-  }, [generateQueue, normalizeChunks, playQueue, stopCurrentAudio, text, updateMemoryStats]);
+  }, [generateQueue, normalizeChunks, playQueue, pruneAudioQueueWindow, setPreparedChunks, stopCurrentAudio, text, updateMemoryStats]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -838,13 +878,16 @@ export function useTTSQueuePlayer({
         return;
       }
 
+      const chunks = normalizeChunks(text);
+      setPreparedChunks(chunks);
+
       setPlayerState({ isPlaying: false, isPaused: true });
     })();
 
     return () => {
       isCancelled = true;
     };
-  }, [reset, setPlayerState, text]);
+  }, [normalizeChunks, reset, setPlayerState, setPreparedChunks, text]);
 
   useEffect(() => {
     return () => {
@@ -856,6 +899,7 @@ export function useTTSQueuePlayer({
     isPlaying,
     isPaused,
     isDownloading,
+    chunkTexts: chunkTextsState,
     currentChunkIndex,
     totalChunks,
     memoryStats,

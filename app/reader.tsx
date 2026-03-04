@@ -9,13 +9,11 @@ import { File } from 'expo-file-system';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import JSZip from 'jszip';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'; // Added useRef
-import { ActivityIndicator, Dimensions, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, NativeSyntheticEvent, NativeScrollEvent, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler'; // New Import
-import RenderHTML from 'react-native-render-html';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ChapterIndex from './bookIndex'; // Importing the ChapterIndex component
 
-const { width } = Dimensions.get('window');
 const extractRawText = (html: string): string => {
   if (!html) return "";
 
@@ -54,32 +52,13 @@ export default function Reader() {
   const [currentChapterNo, setCurrentChapterNo] = useState(1);
   const [zipInstance, setZipInstance] = useState<JSZip | null>(null);
   const [currentHtml, setCurrentHtml] = useState<string>('');
+  const chapterScrollRef = useRef<ScrollView>(null);
+  const chunkLayoutMapRef = useRef<Record<number, { y: number; height: number }>>({});
+  const scrollMetricsRef = useRef({ yOffset: 0, viewportHeight: 0, contentHeight: 0 });
 
   // Bottom Sheet Ref and Snap Points
   const bottomSheetRef = useRef<BottomSheet>(null);
   const snapPoints = useMemo(() => ['1%', '80%'], []);
-
-  const tagsStyles = useMemo(() => ({
-    body: { color: '#E0E0E0', fontSize: 18, lineHeight: 26, fontFamily: 'Georgia' },
-    h1: { color: '#FFFFFF', marginBottom: 20 },
-    h5: { color: '#FFFFFF', marginBottom: 20 },
-    p: { marginBottom: 15 }
-  }), []);
-
-  const classesStyles = {
-    calibre: { paddingHorizontal: 5 },
-    calibre1: { color: '#3498db', textDecorationLine: 'underline' },
-    calibre3: { fontStyle: 'italic' },
-    calibre4: { fontWeight: 'bold' },
-    p: { textAlign: 'justify', fontSize: 18, lineHeight: 26, marginBottom: 10 },
-    p3: { textAlign: 'center', marginBottom: 10 },
-    p6: { fontWeight: 'bold', textAlign: 'justify' },
-    t: { fontSize: 18 },
-    t2: { fontSize: 24, fontWeight: 'bold' },
-    t4: { fontSize: 28, fontWeight: 'bold', fontFamily: 'Georgia' },
-    t12: { fontSize: 12 },
-    t14: { fontWeight: 'bold' },
-  } as const;
 
   useEffect(() => {
     return () => console.log('Reader component destroyed');
@@ -124,6 +103,7 @@ export default function Reader() {
   const {
     isPlaying,
     isDownloading,
+    chunkTexts,
     currentChunkIndex,
     totalChunks,
     seekToChunk,
@@ -132,6 +112,9 @@ export default function Reader() {
   } = useTTSQueuePlayer({
     text: rawChapterText,
     chunkSize: 200,
+    playbackPrefetchAheadChunks: 40,
+    playbackKeepBehindChunks: 20,
+    queueTargetMemoryMB: 96,
   });
 
   const controlsDisabled = !!isDownloading;
@@ -143,8 +126,67 @@ export default function Reader() {
     }
 
     const nextChunkIndex = Math.round(progress * Math.max(totalChunks - 1, 0));
+    ensureChunkInView(nextChunkIndex, true);
     void seekToChunk(nextChunkIndex);
-  }, [controlsDisabled, seekToChunk, totalChunks]);
+  }, [controlsDisabled, ensureChunkInView, seekToChunk, totalChunks]);
+
+  const ensureChunkInView = useCallback((chunkIndex: number, forceCenter: boolean = false) => {
+    if (chunkTexts.length === 0) {
+      return;
+    }
+
+    const clampedIndex = Math.max(0, Math.min(chunkIndex, chunkTexts.length - 1));
+    const layout = chunkLayoutMapRef.current[clampedIndex];
+
+    if (!layout) {
+      return;
+    }
+
+    const { yOffset, viewportHeight, contentHeight } = scrollMetricsRef.current;
+
+    if (viewportHeight <= 0) {
+      return;
+    }
+
+    const topKeepMargin = 90;
+    const bottomKeepMargin = 210;
+    const visibleTop = yOffset + topKeepMargin;
+    const visibleBottom = yOffset + viewportHeight - bottomKeepMargin;
+    const chunkTop = layout.y;
+    const chunkBottom = layout.y + layout.height;
+    const chunkFullyVisible = chunkTop >= visibleTop && chunkBottom <= visibleBottom;
+
+    if (chunkFullyVisible && !forceCenter) {
+      return;
+    }
+
+    const desiredCenterOffset = chunkTop - Math.max(0, (viewportHeight - layout.height) / 2);
+    const maxOffset = Math.max(0, contentHeight - viewportHeight);
+    const targetOffset = Math.max(0, Math.min(desiredCenterOffset, maxOffset));
+
+    chapterScrollRef.current?.scrollTo({ y: targetOffset, animated: true });
+  }, [chunkTexts.length]);
+
+  const handleChunkPress = useCallback((index: number) => {
+    if (controlsDisabled) {
+      return;
+    }
+
+    ensureChunkInView(index, true);
+    void seekToChunk(index);
+  }, [controlsDisabled, ensureChunkInView, seekToChunk]);
+
+  useEffect(() => {
+    chunkLayoutMapRef.current = {};
+  }, [chunkTexts]);
+
+  useEffect(() => {
+    ensureChunkInView(currentChunkIndex);
+  }, [currentChunkIndex, ensureChunkInView]);
+
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    scrollMetricsRef.current.yOffset = event.nativeEvent.contentOffset.y;
+  }, []);
 
   
 
@@ -157,13 +199,51 @@ return (
         <SafeAreaView style={styles.safeAreaTop}>
            <Screenheader title={params.title} />
            <View style={styles.content}>
-              <ScrollView contentContainerStyle={styles.scrollPadding}>
-                <RenderHTML
-                  contentWidth={width}
-                  source={{ html: currentHtml }}
-                  classesStyles={classesStyles}
-                  tagsStyles={tagsStyles}
-                />
+              <ScrollView
+                ref={chapterScrollRef}
+                contentContainerStyle={styles.scrollPadding}
+                onScroll={handleScroll}
+                scrollEventThrottle={16}
+                onLayout={(event) => {
+                  scrollMetricsRef.current.viewportHeight = event.nativeEvent.layout.height;
+                }}
+                onContentSizeChange={(_, contentHeight) => {
+                  scrollMetricsRef.current.contentHeight = contentHeight;
+                }}
+              >
+                <View style={styles.chunkList}>
+                  {chunkTexts.map((chunkValue, index) => {
+                    const isActiveChunk = index === Math.max(0, Math.min(currentChunkIndex, chunkTexts.length - 1));
+
+                    return (
+                      <TouchableOpacity
+                        key={`${index}-${chunkValue.slice(0, 24)}`}
+                        activeOpacity={0.85}
+                        disabled={controlsDisabled}
+                        onPress={() => handleChunkPress(index)}
+                        onLayout={(event) => {
+                          chunkLayoutMapRef.current[index] = {
+                            y: event.nativeEvent.layout.y,
+                            height: event.nativeEvent.layout.height,
+                          };
+
+                          if (index === Math.max(0, Math.min(currentChunkIndex, chunkTexts.length - 1))) {
+                            ensureChunkInView(index);
+                          }
+                        }}
+                        style={[styles.chunkRow, isActiveChunk && styles.chunkRowActive]}
+                      >
+                        <View style={[styles.chunkAccent, isActiveChunk && styles.chunkAccentActive]} />
+                        <Text style={[styles.chunkText, isActiveChunk && styles.chunkTextActive]}>
+                          {chunkValue}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  {chunkTexts.length === 0 && (
+                    <Text style={styles.emptyChunkText}>No readable content found for this chapter.</Text>
+                  )}
+                </View>
               </ScrollView>
            </View>
         </SafeAreaView>
@@ -223,7 +303,45 @@ const styles = StyleSheet.create({
   mainWrapper: { flex: 1, backgroundColor: '#121212' },
   safeAreaTop: { flex: 1 },
   content: { flex: 1 },
-  scrollPadding: { paddingBottom: '25%' },
+  scrollPadding: { paddingBottom: '25%', paddingHorizontal: 16, paddingTop: 12 },
+  chunkList: { gap: 8 },
+  chunkRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    backgroundColor: 'transparent',
+  },
+  chunkRowActive: {
+    backgroundColor: '#1D1D1D',
+  },
+  chunkAccent: {
+    width: 3,
+    borderRadius: 2,
+    marginRight: 10,
+    alignSelf: 'stretch',
+    backgroundColor: 'transparent',
+  },
+  chunkAccentActive: {
+    backgroundColor: '#FFFFFF',
+  },
+  chunkText: {
+    flex: 1,
+    color: '#BDBDBD',
+    fontSize: 18,
+    lineHeight: 28,
+    fontFamily: 'Georgia',
+  },
+  chunkTextActive: {
+    color: '#FFFFFF',
+  },
+  emptyChunkText: {
+    color: '#8F8F8F',
+    fontSize: 15,
+    textAlign: 'center',
+    marginTop: 20,
+  },
   staticTab: {
     position: 'absolute',
     bottom: 0,
