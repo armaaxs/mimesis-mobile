@@ -1,5 +1,6 @@
 import React from 'react';
-import { StyleSheet, Text, View, FlatList, ViewStyle, TextStyle } from 'react-native';
+import { StyleSheet, Text, View, FlatList, ViewStyle, TextStyle, TouchableOpacity } from 'react-native';
+import { IconSymbol } from '../../components/ui/icon-symbol';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { BookCard, Book as LibraryBook } from '../../components/BookCard.components';
@@ -7,8 +8,9 @@ import { AddBookCard } from '../../components/AddBookCard.component';
 import { File } from 'expo-file-system';
 import JSZip from 'jszip';
 import { Book } from '@/models/Book';
-import { listBookCatalog, saveBook } from '@/utils/bookRepository';
+import { listBookCatalog } from '@/utils/bookRepository';
 import { extractEpubImportPayload } from '@/utils/epubparser';
+import { setTransientDto } from '@/utils/transientDtoMap';
 
 const BOOKS: LibraryBook[] = [
   { id: '1', title: 'Stoner', author: 'John Williams', cover: null , uri:''},
@@ -43,11 +45,23 @@ const dedupeBooks = (items: LibraryBook[]): LibraryBook[] => {
 export default function LibraryScreen() {
   const router = useRouter();
   const [books, setBooks] = React.useState<LibraryBook[]>(BOOKS);
-
+  
   const renderHeader = () => (
     <View style={styles.header}>
-      <Text style={styles.date}>Mimesis-82</Text>
-      <Text style={styles.greeting}>Your Library</Text>
+      <View style={styles.topRow}>  
+        <Text style={styles.date}>Mimesis-82</Text>
+      <TouchableOpacity
+          style={styles.settingsButton}
+          onPress={() => router.push('/Settings')}
+          accessibilityLabel="Settings"
+        >
+          <IconSymbol name="chevron.left.forwardslash.chevron.right" size={28} color="#cbd5d1" />
+      </TouchableOpacity>
+    </View>
+      <View style={styles.headingRow}>
+        <Text style={styles.greeting}>Your Library</Text>
+
+      </View>
       <View style={styles.divider} />
     </View>
   );
@@ -88,7 +102,8 @@ export default function LibraryScreen() {
         chapters: importedPayload.chapters,
       });
 
-      await saveBook(importedBook);
+      // Keep import transient until user explicitly saves or reads it
+      setTransientDto(importedBook.id, importedBook.toDTO());
 
       const libraryBook = importedBook.toLibraryItem();
       setBooks((previousBooks) => dedupeBooks([libraryBook, ...previousBooks]));
@@ -98,8 +113,36 @@ export default function LibraryScreen() {
   };
 
   const handleBookPress = (book: LibraryBook) => {
-    router.push({pathname: '/reader', params: { ...book }});
-  }
+    const bookWithMetadata = book as LibraryBook & {
+      metadata?: {
+        summary: string | null;
+        downloadCount: number | null;
+        language: string | null;
+        subjects: string[];
+        sourceId: number | null;
+      } | null;
+      readingProgress?: {
+        lastChapterIndex: number;
+        lastChunkIndex: number;
+        lastChapterHref: string | null;
+        lastReadAt: number;
+      } | null;
+    };
+
+    // Open description page which will resolve transient DTOs or persisted books
+    router.push({
+      pathname: '/BookDescription',
+      params: {
+        bookId: book.id,
+        metadata: bookWithMetadata.metadata
+          ? JSON.stringify(bookWithMetadata.metadata)
+          : undefined,
+        progress: bookWithMetadata.readingProgress
+          ? JSON.stringify(bookWithMetadata.readingProgress)
+          : undefined,
+      },
+    });
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -157,6 +200,24 @@ const styles = StyleSheet.create({
     marginTop: 24,
     width: '100%',
   } as ViewStyle,
+  headingRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  } as ViewStyle,
+    topRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'end',
+    justifyContent: 'space-between',
+  } as ViewStyle,
+  settingsButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  } as ViewStyle,
+  // settingsText removed, replaced by icon
   listPadding: {
     paddingHorizontal: 20,
     paddingBottom: 40,

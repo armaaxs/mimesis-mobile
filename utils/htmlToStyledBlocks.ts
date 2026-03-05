@@ -1,3 +1,5 @@
+import { stripProjectGutenbergPhrases } from './extractRawText';
+
 /**
  * Converts chapter HTML into styled blocks (paragraphs, headings) with inline runs
  * (bold, italic, plain text) mapped to TTS chunk indices for per-run highlighting.
@@ -70,8 +72,8 @@ function extractInlineRuns(innerHtml: string, bold = false, italic = false): Raw
 
   while ((match = tokenRegex.exec(html)) !== null) {
     if (match[4] !== undefined) {
-      // Plain text node
-      const text = normalizeSpace(decodeEntities(match[4]));
+      // Plain text node — strip Gutenberg phrases so text aligns with TTS chunks
+      const text = normalizeSpace(stripProjectGutenbergPhrases(decodeEntities(match[4])));
       if (text.length > 0) {
         runs.push({ text, bold, italic });
       }
@@ -159,39 +161,48 @@ function buildCharToChunkMap(text: string, chunks: string[]): number[] {
  *
  * @param html      Raw chapter HTML
  * @param chunks    TTS chunk strings produced by chunkText() on the same chapter
+ * @param rawText   The exact plain-text string that was fed to chunkText().
+ *                  This is the single source of truth — chunks are guaranteed
+ *                  substrings of rawText after the same normalization chunkText uses.
  */
-export function htmlToStyledBlocks(html: string, chunks: string[]): StyledBlock[] {
+export function htmlToStyledBlocks(html: string, chunks: string[], rawText: string): StyledBlock[] {
   if (!html || chunks.length === 0) return [];
 
   const rawBlocks = extractBlocks(html);
   if (rawBlocks.length === 0) return [];
 
-  // Build canonical text: join all run texts with a space between blocks,
-  // then apply the same normalisation chunkText() uses so chunk substrings align.
-  const blockPlainTexts = rawBlocks.map((b) => b.runs.map((r) => r.text).join(''));
-  const canonicalText = blockPlainTexts
-    .join(' ')
-    .replace(/[\t\r\n]+/g, ' ')
+  // Normalize rawText identically to how chunkText() does internally.
+  // Chunks are exact substrings of this normalised string.
+  const normalizedRaw = rawText
+    .replace(/[\t\r]+/g, ' ')
+    .replace(/\n+/g, ' ')
     .replace(/ {2,}/g, ' ')
     .trim();
 
-  const charToChunk = buildCharToChunkMap(canonicalText, chunks);
+  const charToChunk = buildCharToChunkMap(normalizedRaw, chunks);
 
-  // Walk runs in order, tracking position in canonicalText, split at chunk boundaries
-  let charPos = 0;
+  // Walk runs in document order, progressively searching for each run’s
+  // text in normalizedRaw so positions stay aligned with the chunk map.
+  let searchFrom = 0;
   const result: StyledBlock[] = [];
 
-  for (let bi = 0; bi < rawBlocks.length; bi++) {
-    const block = rawBlocks[bi];
+  for (const block of rawBlocks) {
     const mappedRuns: InlineRun[] = [];
 
     for (const run of block.runs) {
       const runText = run.text.replace(/[\t\r\n]+/g, ' ').replace(/ {2,}/g, ' ');
       if (runText.length === 0) continue;
 
+      // Find this run’s text inside the normalised raw text.
+      // Use indexOf for exact match; fall back to current position if not found
+      // (e.g. entity-decoding differences).
+      const found = normalizedRaw.indexOf(runText, searchFrom);
+      const runStart = found >= 0 ? found : searchFrom;
+      const runEnd = runStart + runText.length;
+
       // Determine starting chunk index for this run
       let currentChunk = -1;
-      for (let i = charPos; i < Math.min(charPos + runText.length, charToChunk.length); i++) {
+      for (let i = runStart; i < Math.min(runEnd, charToChunk.length); i++) {
         if (charToChunk[i] >= 0) {
           currentChunk = charToChunk[i];
           break;
@@ -201,10 +212,10 @@ export function htmlToStyledBlocks(html: string, chunks: string[]): StyledBlock[
 
       // Walk character by character, emitting a new sub-run at every chunk boundary
       let segStart = 0;
-      for (let i = charPos; i < Math.min(charPos + runText.length, charToChunk.length); i++) {
+      for (let i = runStart; i < Math.min(runEnd, charToChunk.length); i++) {
         const ci = charToChunk[i] >= 0 ? charToChunk[i] : currentChunk;
         if (ci !== currentChunk) {
-          const localOffset = i - charPos;
+          const localOffset = i - runStart;
           const segText = runText.slice(segStart, localOffset);
           if (segText.length > 0) {
             mappedRuns.push({ text: segText, bold: run.bold, italic: run.italic, chunkIndex: currentChunk });
@@ -214,18 +225,16 @@ export function htmlToStyledBlocks(html: string, chunks: string[]): StyledBlock[
         }
       }
 
-      // Emit any remaining text at end of run
+      // Emit remaining text
       const remaining = runText.slice(segStart);
       if (remaining.length > 0) {
         mappedRuns.push({ text: remaining, bold: run.bold, italic: run.italic, chunkIndex: currentChunk });
       }
 
-      charPos += runText.length;
-    }
-
-    // Account for the inter-block space we inserted in canonicalText
-    if (bi < rawBlocks.length - 1) {
-      charPos += 1;
+      // Advance search position
+      if (found >= 0) {
+        searchFrom = found + runText.length;
+      }
     }
 
     if (mappedRuns.length > 0) {

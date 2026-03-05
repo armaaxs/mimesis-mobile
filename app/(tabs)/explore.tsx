@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { getCachedTopic, setCachedTopic, clearCachedTopic, clearAllCache } from '@/utils/exploreCache';
 // --- CONFIGURATION ---
 const CATEGORIES = [
@@ -142,7 +143,7 @@ const BookSection = ({ title, topic, refreshToken }: { title: string; topic: str
     (async () => {
       booksRef.current = [];
       setBooks([]);
-      setNextUrl(`https://gutendex.com/books?topic=${topic}`);
+                setNextUrl(`https://gutendex.com/books?&page=${Math.floor(Math.random() * 10) + 1}&topic=${topic}`);
       setInitialLoading(true);
       await fetchBooks(true);
     })();
@@ -158,7 +159,7 @@ const BookSection = ({ title, topic, refreshToken }: { title: string; topic: str
           // reset state and fetch fresh
           booksRef.current = [];
           setBooks([]);
-          setNextUrl(`https://gutendex.com/books?topic=${topic}`);
+                    setNextUrl(`https://gutendex.com/books?&page=${Math.floor(Math.random() * 10) + 1}&topic=$${topic}`);
           setInitialLoading(true);
           await fetchBooks(true);
         }}><Text style={styles.seeAll}>See All</Text></TouchableOpacity>
@@ -203,6 +204,7 @@ const BookSection = ({ title, topic, refreshToken }: { title: string; topic: str
 
 // --- MAIN LIBRARY SCREEN ---
 export default function Explore() {
+  const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
 
@@ -229,7 +231,15 @@ export default function Explore() {
       ) : null}
       <View style={styles.headerContainer}>
         <Text style={styles.headerSub}>Discover</Text>
-        <Text style={styles.headerTitle}>My Library</Text>
+        <View style={styles.headerTitleRow}>
+          <Text style={styles.headerTitle}>My Library</Text>
+          <TouchableOpacity
+            onPress={() => router.push('/search')}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="search" size={22} color="#fff" />
+          </TouchableOpacity>
+        </View>
       </View>
     </>
   );
@@ -264,7 +274,7 @@ export default function Explore() {
 const styles = StyleSheet.create({
   mainWrapper: {
     flex: 1,
-    backgroundColor: '#0F0F0F', // True dark mode
+    backgroundColor: '#000000', // True AMOLED black
   },
   headerContainer: {
     paddingHorizontal: 20,
@@ -272,6 +282,7 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
   },
   headerSub: {
+    fontFamily: 'Georgia',
     color: '#00d8b4',
     fontSize: 12,
     fontWeight: '800',
@@ -279,7 +290,13 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
     marginBottom: 4,
   },
+  headerTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   headerTitle: {
+    fontFamily: 'Georgia',
     color: '#FFFFFF',
     fontSize: 32,
     fontWeight: '800',
@@ -297,6 +314,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   pullRefreshText: {
+    fontFamily: 'Georgia',
     color: '#00d8b4',
     fontSize: 12,
     fontWeight: '600',
@@ -312,11 +330,13 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
   sectionTitle: {
+    fontFamily: 'Georgia',
     color: '#F0F0F0',
     fontSize: 20,
     fontWeight: '700',
   },
   seeAll: {
+    fontFamily: 'Georgia',
     color: '#00d8b4',
     fontSize: 14,
     fontWeight: '600',
@@ -333,9 +353,10 @@ const styles = StyleSheet.create({
     width: 140,
     height: 210,
     borderRadius: 8,
-    backgroundColor: '#1A1A1A',
+    backgroundColor: '#111111', // Darkened to match deeper AMOLED contrast
   },
   bookTitle: {
+    fontFamily: 'Georgia',
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
@@ -343,6 +364,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   bookAuthor: {
+    fontFamily: 'Georgia',
     color: '#888888',
     fontSize: 12,
     marginTop: 4,
@@ -359,11 +381,11 @@ const styles = StyleSheet.create({
     width: 140,
     height: 210,
     borderRadius: 8,
-    backgroundColor: '#222',
+    backgroundColor: '#111111', // Darkened 
   },
   skeletonText: {
     height: 14,
-    backgroundColor: '#222',
+    backgroundColor: '#111111', // Darkened 
     borderRadius: 4,
     marginTop: 10,
   },

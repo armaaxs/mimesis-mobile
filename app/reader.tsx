@@ -1,10 +1,11 @@
 import ChunkSeeker from '@/components/ChunkSeeker.component';
 import DownloadOverlay from '@/components/DownloadOverlay.component';
 import Screenheader from '@/components/Screenheader.component';
+import { useBackgroundMediaSession } from '@/hooks/use-background-media-session';
 import { useTTSQueuePlayer } from '@/hooks/use-tts-queue-player';
-import { Book } from '@/models/Book';
-import { getBookById, getBookByUri } from '@/utils/bookRepository';
-import { extractRawText, stripProjectGutenbergPhrases } from '@/utils/extractRawText';
+import { Book, BookReadingProgressDTO } from '@/models/Book';
+import { getBookById, getBookByUri, saveBookReadingProgress } from '@/utils/bookRepository';
+import { extractRawText } from '@/utils/extractRawText';
 import { htmlToStyledBlocks } from '@/utils/htmlToStyledBlocks';
 import { getChapterText, parseEpub } from '@/utils/epubparser';
 import { Ionicons } from '@expo/vector-icons';
@@ -79,8 +80,13 @@ export default function Reader() {
     id?: string; 
     author?: string; 
     cover?: string; 
-    uri?: string 
+    uri?: string;
+    resumeChapterIndex?: string | string[];
+    resumeChunkIndex?: string | string[];
+    resumeChapterHref?: string | string[];
   }>();
+
+  console.log('[Reader] params received:', JSON.stringify(params, null, 2));
 
   const [bookData, setBookData] = useState<any>(null);
   const [persistedBook, setPersistedBook] = useState<Book | null>(null);
@@ -93,10 +99,28 @@ export default function Reader() {
   const chapterScrollRef = useRef<ScrollView>(null);
   const chunkLayoutMapRef = useRef<Record<number, { y: number; height: number }>>({});
   const scrollMetricsRef = useRef({ yOffset: 0, viewportHeight: 0, contentHeight: 0 });
+  const pendingAutoScrollChunkRef = useRef<number | null>(null);
+  const [isResumeBootstrapDone, setIsResumeBootstrapDone] = useState(false);
 
   // Bottom Sheet Ref and Snap Points
   const bottomSheetRef = useRef<BottomSheet>(null);
   const snapPoints = useMemo(() => ['1%', '80%'], []);
+
+  const parseParamNumber = useCallback((value?: string | string[]) => {
+    const raw = Array.isArray(value) ? value[0] : value;
+    if (!raw) return null;
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, []);
+
+  const parseParamString = useCallback((value?: string | string[]) => {
+    const raw = Array.isArray(value) ? value[0] : value;
+    return raw || null;
+  }, []);
+
+  const routeResumeChapterIndex = useMemo(() => parseParamNumber(params.resumeChapterIndex), [params.resumeChapterIndex, parseParamNumber]);
+  const routeResumeChunkIndex = useMemo(() => parseParamNumber(params.resumeChunkIndex), [params.resumeChunkIndex, parseParamNumber]);
+  const routeResumeChapterHref = useMemo(() => parseParamString(params.resumeChapterHref), [params.resumeChapterHref, parseParamString]);
 
   useEffect(() => {
     return () => console.log('Reader component destroyed');
@@ -199,6 +223,74 @@ export default function Reader() {
     return isApiFetchedBook ? withoutCover.slice(1) : withoutCover;
   }, [bookData?.chapters, isApiFetchedBook, persistedBook?.chapters]);
 
+  const resolvedResumeProgress = useMemo<BookReadingProgressDTO | null>(() => {
+    if (persistedBook?.readingProgress) {
+      return persistedBook.readingProgress;
+    }
+
+    if (routeResumeChapterIndex === null && routeResumeChunkIndex === null && !routeResumeChapterHref) {
+      return null;
+    }
+
+    return {
+      lastChapterIndex: Math.max(0, routeResumeChapterIndex ?? 0),
+      lastChunkIndex: Math.max(0, routeResumeChunkIndex ?? 0),
+      lastChapterHref: routeResumeChapterHref,
+      lastReadAt: Date.now(),
+    };
+  }, [persistedBook?.readingProgress, routeResumeChapterIndex, routeResumeChunkIndex, routeResumeChapterHref]);
+
+  const initialResumeAppliedRef = useRef(false);
+  const initialResumeChunkAppliedRef = useRef(false);
+  const resumeTargetChapterRef = useRef<number>(0);
+  const progressWriteInFlightRef = useRef(false);
+  const pendingProgressRef = useRef<BookReadingProgressDTO | null>(null);
+
+  useEffect(() => {
+    initialResumeAppliedRef.current = false;
+    initialResumeChunkAppliedRef.current = false;
+    resumeTargetChapterRef.current = 0;
+    setIsResumeBootstrapDone(false);
+  }, [persistedBook?.id]);
+
+  useEffect(() => {
+    if (initialResumeAppliedRef.current) {
+      return;
+    }
+
+    if (menuChapters.length === 0) {
+      return;
+    }
+
+    if (!resolvedResumeProgress) {
+      initialResumeAppliedRef.current = true;
+      initialResumeChunkAppliedRef.current = true;
+      setIsResumeBootstrapDone(true);
+      return;
+    }
+
+    let targetChapter = Math.max(0, Math.min(resolvedResumeProgress.lastChapterIndex, menuChapters.length - 1));
+    if (resolvedResumeProgress.lastChapterHref) {
+      const foundByHref = menuChapters.findIndex((chapter) => chapter.href === resolvedResumeProgress.lastChapterHref);
+      if (foundByHref >= 0) {
+        targetChapter = foundByHref;
+      }
+    }
+
+    resumeTargetChapterRef.current = targetChapter;
+    initialResumeAppliedRef.current = true;
+
+    if (currentChapterNo !== targetChapter) {
+      setCurrentChapterNo(targetChapter);
+      return;
+    }
+
+    if ((resolvedResumeProgress.lastChunkIndex ?? 0) <= 0) {
+      initialResumeChunkAppliedRef.current = true;
+      setIsResumeBootstrapDone(true);
+    }
+  }, [currentChapterNo, menuChapters, resolvedResumeProgress]);
+
   useEffect(() => {
     const fetchText = async () => {
       const selectedChapter = menuChapters[currentChapterNo];
@@ -260,88 +352,243 @@ export default function Reader() {
   const controlsDisabled = !!isDownloading;
   const seekerProgress = totalChunks <= 1 ? 0 : currentChunkIndex / (totalChunks - 1);
 
+  useEffect(() => {
+    if (initialResumeChunkAppliedRef.current) {
+      return;
+    }
+
+    const progress = resolvedResumeProgress;
+    if (!progress) {
+      initialResumeChunkAppliedRef.current = true;
+      setIsResumeBootstrapDone(true);
+      return;
+    }
+
+    if (currentChapterNo !== resumeTargetChapterRef.current) {
+      return;
+    }
+
+    if (chunkTexts.length === 0) {
+      return;
+    }
+
+    const targetChunk = Math.max(0, Math.min(progress.lastChunkIndex, chunkTexts.length - 1));
+    initialResumeChunkAppliedRef.current = true;
+    setIsResumeBootstrapDone(true);
+
+    if (targetChunk > 0) {
+      void seekToChunk(targetChunk);
+    }
+  }, [chunkTexts.length, currentChapterNo, resolvedResumeProgress, seekToChunk]);
+
+  const queuePersistReadingProgress = useCallback((progress: BookReadingProgressDTO) => {
+    const bookId = persistedBook?.id;
+    if (!bookId) {
+      return;
+    }
+
+    pendingProgressRef.current = progress;
+    if (progressWriteInFlightRef.current) {
+      return;
+    }
+
+    progressWriteInFlightRef.current = true;
+    void (async () => {
+      try {
+        while (pendingProgressRef.current) {
+          const nextProgress = pendingProgressRef.current;
+          pendingProgressRef.current = null;
+
+          await saveBookReadingProgress(bookId, nextProgress);
+          setPersistedBook((prev) => {
+            if (!prev || prev.id !== bookId) {
+              return prev;
+            }
+
+            return Book.fromDTO({
+              ...prev.toDTO(),
+              readingProgress: nextProgress,
+            });
+          });
+        }
+      } catch (error) {
+        console.warn('Failed to persist reading progress:', error);
+      } finally {
+        progressWriteInFlightRef.current = false;
+      }
+    })();
+  }, [persistedBook?.id]);
+
+  useEffect(() => {
+    if (!isResumeBootstrapDone || !persistedBook?.id || menuChapters.length === 0) {
+      return;
+    }
+
+    const selectedChapter = menuChapters[currentChapterNo];
+    queuePersistReadingProgress({
+      lastChapterIndex: currentChapterNo,
+      lastChunkIndex: currentChunkIndex,
+      lastChapterHref: selectedChapter?.href || null,
+      lastReadAt: Date.now(),
+    });
+  }, [
+    currentChapterNo,
+    currentChunkIndex,
+    isResumeBootstrapDone,
+    menuChapters,
+    persistedBook?.id,
+    queuePersistReadingProgress,
+  ]);
+
   const styledBlocks = useMemo(() => {
-    const blocks = htmlToStyledBlocks(currentHtml, chunkTexts);
+    const blocks = htmlToStyledBlocks(currentHtml, chunkTexts, rawChapterText);
+    // Filter out any runs that ended up empty after stripping.
     return blocks
       .map((block) => ({
         ...block,
-        runs: block.runs
-          .map((run) => ({
-            ...run,
-            text: stripProjectGutenbergPhrases(run.text),
-          }))
-          .filter((run) => run.text.trim().length > 0),
+        runs: block.runs.filter((run) => run.text.trim().length > 0),
       }))
       .filter((block) => block.runs.length > 0);
-  }, [currentHtml, chunkTexts]);
+  }, [currentHtml, chunkTexts, rawChapterText]);
 
   const currentChapterTitle = useMemo(() => {
     return menuChapters[currentChapterNo]?.title || `Chapter ${currentChapterNo + 1}`;
   }, [currentChapterNo, menuChapters]);
 
-  const ensureChunkInView = useCallback((chunkIndex: number, forceCenter: boolean = false) => {
-    if (chunkTexts.length === 0) {
-      return;
-    }
+  // ────────────────────────────────────────────────────────────────────────
+  // SCROLL LOGIC — Kindle-style continuous scroll with pinned active chunk
+  // ────────────────────────────────────────────────────────────────────────
+  //
+  // The staticTab panel overlays the bottom 240px of the ScrollView.
+  // The active chunk is pinned at 33% of the *visible* reading area
+  // (viewport minus the panel). When TTS advances, the view smoothly
+  // scrolls so the new chunk arrives at the pin position. If the user
+  // scrolls away, the next chunk change snaps it right back.
+  // ────────────────────────────────────────────────────────────────────────
+  const BOTTOM_PANEL_HEIGHT = 240;
+  const READING_LINE_RATIO = 0.33;
+  const SCROLL_PADDING_TOP = 12; // must match scrollPadding.paddingTop in styles
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const clampedIndex = Math.max(0, Math.min(chunkIndex, chunkTexts.length - 1));
-    const layout = chunkLayoutMapRef.current[clampedIndex];
+  /**
+   * Core scroll function. Pins `chunkIndex` at the reading-line position.
+   * If layout data isn't ready yet, stores the index in pendingAutoScrollChunkRef
+   * so it can be retried when measurements arrive.
+   */
+  const scrollToChunk = useCallback((chunkIndex: number, animated: boolean = true) => {
+    if (chunkTexts.length === 0) return;
+
+    const clamped = Math.max(0, Math.min(chunkIndex, chunkTexts.length - 1));
+    const layout = chunkLayoutMapRef.current[clamped];
 
     if (!layout) {
+      // Layout not measured yet — queue and wait for onLayout / onContentSizeChange.
+      pendingAutoScrollChunkRef.current = clamped;
       return;
     }
 
-    const { yOffset, viewportHeight, contentHeight } = scrollMetricsRef.current;
-
+    const { viewportHeight } = scrollMetricsRef.current;
     if (viewportHeight <= 0) {
+      pendingAutoScrollChunkRef.current = clamped;
       return;
     }
 
-    const topKeepMargin = 90;
-    const bottomKeepMargin = 210;
-    const visibleTop = yOffset + topKeepMargin;
-    const visibleBottom = yOffset + viewportHeight - bottomKeepMargin;
-    const chunkTop = layout.y;
-    const chunkBottom = layout.y + layout.height;
-    const chunkFullyVisible = chunkTop >= visibleTop && chunkBottom <= visibleBottom;
+    // Visible reading area = full scroll viewport minus the overlaid bottom panel.
+    const visibleHeight = Math.max(viewportHeight - BOTTOM_PANEL_HEIGHT, 200);
+    // Pin the chunk's top edge at 33% from the top of the visible area.
+    const pinOffset = visibleHeight * READING_LINE_RATIO;
+    const targetY = Math.max(0, layout.y - pinOffset);
 
-    if (chunkFullyVisible && !forceCenter) {
-      return;
-    }
-
-const desiredCenterOffset = chunkTop - Math.max(0, (viewportHeight - layout.height) / 2) + 100;
-    const maxOffset = Math.max(0, contentHeight - viewportHeight);
-    const targetOffset = Math.max(0, Math.min(desiredCenterOffset, maxOffset));
-
-    chapterScrollRef.current?.scrollTo({ y: targetOffset, animated: true });
+    pendingAutoScrollChunkRef.current = null;
+    chapterScrollRef.current?.scrollTo({ y: targetY, animated });
   }, [chunkTexts.length]);
 
-  const handleSeek = useCallback((progress: number) => {
-    if (controlsDisabled || totalChunks <= 0) {
-      return;
-    }
+  /**
+   * Debounced flush — called when ScrollView layout or content size becomes
+   * available. Coalesces rapid-fire events into a single scroll attempt.
+   */
+  const schedulePendingFlush = useCallback(() => {
+    if (flushTimerRef.current !== null) return; // already scheduled
+    flushTimerRef.current = setTimeout(() => {
+      flushTimerRef.current = null;
+      const pending = pendingAutoScrollChunkRef.current;
+      if (pending !== null) {
+        scrollToChunk(pending);
+      }
+    }, 0);
+  }, [scrollToChunk]);
 
+  const handleSeek = useCallback((progress: number) => {
+    if (controlsDisabled || totalChunks <= 0) return;
     const nextChunkIndex = Math.round(progress * Math.max(totalChunks - 1, 0));
-    ensureChunkInView(nextChunkIndex, true);
+    scrollToChunk(nextChunkIndex);
     void seekToChunk(nextChunkIndex);
-  }, [controlsDisabled, ensureChunkInView, seekToChunk, totalChunks]);
+  }, [controlsDisabled, scrollToChunk, seekToChunk, totalChunks]);
 
   const handleChunkPress = useCallback((index: number) => {
-    if (controlsDisabled) {
-      return;
-    }
-
-    ensureChunkInView(index, true);
+    if (controlsDisabled) return;
+    scrollToChunk(index);
     void seekToChunk(index);
-  }, [controlsDisabled, ensureChunkInView, seekToChunk]);
+  }, [controlsDisabled, scrollToChunk, seekToChunk]);
 
+  const handleRemotePlay = useCallback(() => {
+    if (!isPlaying) {
+      void togglePlayPause();
+    }
+  }, [isPlaying, togglePlayPause]);
+
+  const handleRemotePause = useCallback(() => {
+    if (isPlaying) {
+      void togglePlayPause();
+    }
+  }, [isPlaying, togglePlayPause]);
+
+  useBackgroundMediaSession({
+    title: persistedBook?.title || params.title || 'Reader',
+    artist: persistedBook?.author || params.author || 'Audiobook',
+    artwork: persistedBook?.cover || params.cover || undefined,
+    isPlaying,
+    position: currentChunkIndex,
+    duration: Math.max(totalChunks - 1, 1),
+    onPlay: handleRemotePlay,
+    onPause: handleRemotePause,
+  });
+
+  // ── Lifecycle effects for scroll ──────────────────────────────────────
+
+  // Track cover→text mode transition for instant-jump on entry.
+  const wasInTextModeRef = useRef(false);
+
+  // When chapter HTML changes, reset all layout measurements.
   useEffect(() => {
     chunkLayoutMapRef.current = {};
-  }, [chunkTexts]);
+    // The current chunk will be re-scrolled once block layouts arrive.
+    pendingAutoScrollChunkRef.current = 0;
+  }, [currentHtml]);
 
+  // TTS advancement: smooth animated re-pin to reading line on every chunk change.
   useEffect(() => {
-    ensureChunkInView(currentChunkIndex);
-  }, [currentChunkIndex, ensureChunkInView]);
+    scrollToChunk(currentChunkIndex, true);
+  }, [currentChunkIndex, scrollToChunk]);
+
+  // Mode transition: instant jump when entering text view from cover.
+  useEffect(() => {
+    const justEntered = isTextMode && !wasInTextModeRef.current;
+    wasInTextModeRef.current = isTextMode;
+
+    if (justEntered) {
+      // Small delay so the animated-pane opacity is > 0 before we scroll.
+      const t = setTimeout(() => scrollToChunk(currentChunkIndex, false), 50);
+      return () => clearTimeout(t);
+    }
+  }, [isTextMode, currentChunkIndex, scrollToChunk]);
+
+  // Cleanup flush timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (flushTimerRef.current !== null) clearTimeout(flushTimerRef.current);
+    };
+  }, []);
 
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     scrollMetricsRef.current.yOffset = event.nativeEvent.contentOffset.y;
@@ -430,25 +677,53 @@ return (
                     scrollEventThrottle={16}
                     onLayout={(event) => {
                       scrollMetricsRef.current.viewportHeight = event.nativeEvent.layout.height;
+                      schedulePendingFlush();
                     }}
                     onContentSizeChange={(_, contentHeight) => {
                       scrollMetricsRef.current.contentHeight = contentHeight;
+                      schedulePendingFlush();
                     }}
                   >
                     <View style={styles.blockList}>
                       {styledBlocks.map((block, blockIndex) => {
                         const blockChunkIndices = [...new Set(block.runs.map((r) => r.chunkIndex))];
+
+                        // Pre-compute each chunk's character-offset ratio within
+                        // this block so onLayout can place them proportionally
+                        // instead of pinning every chunk to the block's top edge.
+                        const totalChars = block.runs.reduce((sum, r) => sum + r.text.length, 0);
+                        let charCursor = 0;
+                        const chunkStartRatio: Record<number, number> = {};
+                        for (const run of block.runs) {
+                          if (!(run.chunkIndex in chunkStartRatio)) {
+                            chunkStartRatio[run.chunkIndex] = totalChars > 0 ? charCursor / totalChars : 0;
+                          }
+                          charCursor += run.text.length;
+                        }
+
                         return (
                           <View
                             key={blockIndex}
                             style={block.type !== 'p' ? styles.headingBlock : styles.paragraphBlock}
                             onLayout={(event) => {
                               const { y, height } = event.nativeEvent.layout;
-                              blockChunkIndices.forEach((ci) => {
+                              // y is relative to blockList; add SCROLL_PADDING_TOP
+                              // for content-container coordinates used by scrollTo.
+                              const blockY = y + SCROLL_PADDING_TOP;
+                              let anyNew = false;
+                              for (const ci of blockChunkIndices) {
                                 if (!chunkLayoutMapRef.current[ci]) {
-                                  chunkLayoutMapRef.current[ci] = { y, height };
+                                  const ratio = chunkStartRatio[ci] ?? 0;
+                                  chunkLayoutMapRef.current[ci] = {
+                                    y: blockY + height * ratio,
+                                    height: height / Math.max(blockChunkIndices.length, 1),
+                                  };
+                                  anyNew = true;
                                 }
-                              });
+                              }
+                              if (anyNew && pendingAutoScrollChunkRef.current !== null) {
+                                schedulePendingFlush();
+                              }
                             }}
                           >
                             <Text
@@ -646,7 +921,9 @@ const styles = StyleSheet.create({
 
   // --- STYLED BLOCK RENDERING ---
   scrollPadding: { 
-    paddingBottom: '25%', 
+    // Large bottom padding ensures the last chunk can scroll up
+    // to the upper-third pin position above the 240px bottom panel.
+    paddingBottom: 500, 
     paddingHorizontal: 20, 
     paddingTop: 12 
   },

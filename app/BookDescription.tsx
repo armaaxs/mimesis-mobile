@@ -16,9 +16,10 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Buffer } from 'buffer';
 import { Directory, File, Paths } from 'expo-file-system';
 import JSZip from 'jszip';
-import { Book, LibraryBookItem } from '@/models/Book';
-import { getBookByUri, saveBook } from '@/utils/bookRepository';
+import { Book, LibraryBookItem, BookDTO, BookMetadataDTO, BookReadingProgressDTO } from '@/models/Book';
+import { getBookByUri, saveBook, getBookById } from '@/utils/bookRepository';
 import { extractEpubImportPayload } from '@/utils/epubparser';
+import { getTransientDto, setTransientDto, deleteTransientDto } from '@/utils/transientDtoMap';
 
 // Types based on your JSON
 type Author = { name: string; birth_year: number; death_year: number };
@@ -41,70 +42,147 @@ export default function BookDetailScreen() {
 
   // Normalize book param (expo-router passes search params)
   const rawBook = Array.isArray(params.book) ? params.book[0] : params.book;
-  let book: BookData | null = null;
-  try {
-    if (!rawBook) {
-      book = null;
-    } else if (typeof rawBook === 'string') {
-      book = JSON.parse(rawBook) as BookData;
-    } else {
-      book = rawBook as BookData;
-    }
-  } catch (e) {
-    console.warn('Failed to parse book route param', e);
-    book = null;
-  }
+  const routeBookId = (params as any).bookId as string | undefined;
+  const rawRouteMetadata = Array.isArray((params as any).metadata)
+    ? (params as any).metadata[0]
+    : ((params as any).metadata as string | undefined);
+  const rawRouteProgress = Array.isArray((params as any).progress)
+    ? (params as any).progress[0]
+    : ((params as any).progress as string | undefined);
 
-  console.log('[BookDescription] received book param ->', book ? { id: book.id, title: book.title } : null);
   const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
   const [isPreparingBook, setIsPreparingBook] = useState(false);
   const [preparedLibraryBook, setPreparedLibraryBook] = useState<LibraryBookItem | null>(null);
+  const [bookDTO, setBookDTO] = useState<BookDTO | null>(null);
+  const [gutendexBook, setGutendexBook] = useState<BookData | null>(null);
+  const [isSaved, setIsSaved] = useState(false);
+
+  const routeMetadata = useMemo<BookMetadataDTO | null>(() => {
+    if (!rawRouteMetadata) return null;
+    try {
+      return JSON.parse(rawRouteMetadata) as BookMetadataDTO;
+    } catch {
+      return null;
+    }
+  }, [rawRouteMetadata]);
+
+  const routeProgress = useMemo<BookReadingProgressDTO | null>(() => {
+    if (!rawRouteProgress) return null;
+    try {
+      return JSON.parse(rawRouteProgress) as BookReadingProgressDTO;
+    } catch {
+      return null;
+    }
+  }, [rawRouteProgress]);
+
+  useEffect(() => {
+    // Normalize incoming params: rawBook may be a Gutendex JSON string, routeBookId may reference a transient or persisted book
+    if (rawBook) {
+      try {
+        const parsed = JSON.parse(rawBook) as BookData;
+        setGutendexBook(parsed);
+        setBookDTO(null);
+        setPreparedLibraryBook(null);
+        setIsSaved(false);
+      } catch (e) {
+        console.warn('Failed to parse book route param', e);
+      }
+    } else if (routeBookId) {
+      setGutendexBook(null);
+      // check transient DTO map first
+      const transient = getTransientDto<BookDTO>(routeBookId);
+      if (transient) {
+        setBookDTO(transient);
+        setPreparedLibraryBook({
+          id: transient.id,
+          title: transient.title,
+          author: transient.author,
+          cover: transient.cover,
+          uri: transient.uri,
+          metadata: transient.metadata,
+          readingProgress: transient.readingProgress,
+        });
+        setIsSaved(false);
+      } else {
+        // try persisted storage
+        (async () => {
+          const persisted = await getBookById(routeBookId);
+          if (persisted) {
+            const dto = persisted.toDTO();
+            setBookDTO(dto);
+            setPreparedLibraryBook(persisted.toLibraryItem());
+            setIsSaved(true);
+          }
+        })();
+      }
+    }
+  }, [rawBook, routeBookId]);
 
   const displayAuthor = useMemo(() => {
-    if (!book) return 'Unknown Author';
-    const rawAuthor = book.authors[0]?.name || 'Unknown Author';
-    return rawAuthor.includes(',')
-      ? rawAuthor.split(',').reverse().join(' ').trim()
-      : rawAuthor;
-  }, [book]);
+    if (gutendexBook) {
+      const rawAuthor = gutendexBook.authors[0]?.name || 'Unknown Author';
+      return rawAuthor.includes(',') ? rawAuthor.split(',').reverse().join(' ').trim() : rawAuthor;
+    }
+    if (bookDTO) return bookDTO.author || 'Unknown Author';
+    return 'Unknown Author';
+  }, [gutendexBook, bookDTO]);
 
   const epubUrl = useMemo(() => {
-    if (!book) return null;
-    return (
-      book.formats['application/epub+zip'] ||
-      book.formats['application/octet-stream'] ||
-      null
-    );
-  }, [book]);
+    if (gutendexBook) {
+      return gutendexBook.formats['application/epub+zip'] || gutendexBook.formats['application/octet-stream'] || null;
+    }
+    return null;
+  }, [gutendexBook]);
 
-  // If no book data is passed (for testing/safety)
-  if (!book) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="light-content" />
-        <View style={{ padding: 20 }}>
-          <Text style={{ color: '#fff' }}>No book data provided.</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  const hasBookData = Boolean(gutendexBook || bookDTO);
 
   // --- Data Cleaning ---
-  const coverUrl = book.formats['image/jpeg'];
+  const coverUrl = (gutendexBook && gutendexBook.formats['image/jpeg']) || bookDTO?.cover || null;
+  const displayTitle = gutendexBook?.title || bookDTO?.title || 'Unknown Title';
+  const displayDownloadCount = gutendexBook?.download_count ?? bookDTO?.metadata?.downloadCount ?? routeMetadata?.downloadCount ?? 0;
+  const displayLanguage = gutendexBook?.languages?.[0]?.toUpperCase() || bookDTO?.metadata?.language?.toUpperCase() || routeMetadata?.language?.toUpperCase() || 'N/A';
 
   // Clean up the Gutenberg auto-generated text warning
-  const cleanSummary = book.summaries[0]?.replace(
-    /\(This is an automatically generated summary\.\)/g, 
-    ''
-  ).trim() || "No summary available for this title.";
+  const cleanSummary = (() => {
+    const dtoSummary = bookDTO?.chapters?.[0]?.plainText?.slice(0, 300) || '';
+    return (gutendexBook?.summaries?.[0] || bookDTO?.metadata?.summary || routeMetadata?.summary || dtoSummary || '')
+      .replace(/\(This is an automatically generated summary\.\)/g, '')
+      .trim() || 'No summary available for this title.';
+  })();
 
   const formatNumber = (num: number) => num.toLocaleString('en-US');
   
   // Take only the first 4 subjects for a clean UI
-  const displayTags = book.subjects.slice(0, 4).map(sub => sub.split(' -- ')[0]);
+  const displayTags: string[] = (gutendexBook?.subjects || bookDTO?.metadata?.subjects || routeMetadata?.subjects || [])
+    .slice(0, 4)
+    .map((sub: string) => sub.split(' -- ')[0]);
 
   const ensureBookPrepared = useCallback(async (): Promise<LibraryBookItem | null> => {
-    if (!epubUrl) {
+    if (preparedLibraryBook) return preparedLibraryBook;
+
+    // If we already have a persisted DTO, use it
+    if (bookDTO) {
+      const persisted = await getBookById(bookDTO.id);
+      if (persisted) {
+        setPreparedLibraryBook(persisted.toLibraryItem());
+        setIsSaved(true);
+        return persisted.toLibraryItem();
+      }
+      // not persisted yet — prepare transiently
+      const lib = {
+        id: bookDTO.id,
+        title: bookDTO.title,
+        author: bookDTO.author,
+        cover: bookDTO.cover,
+        uri: bookDTO.uri,
+        metadata: bookDTO.metadata,
+        readingProgress: bookDTO.readingProgress,
+      };
+      setPreparedLibraryBook(lib);
+      return lib;
+    }
+
+    if (!epubUrl || !gutendexBook) {
       console.warn('[BookDescription] No EPUB URL available for this book');
       return null;
     }
@@ -114,15 +192,15 @@ export default function BookDetailScreen() {
       storeDirectory.create({ intermediates: true, idempotent: true });
     }
 
-    const safeId = String(book.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeId = String(gutendexBook.id).replace(/[^a-zA-Z0-9_-]/g, '_');
     const destinationFile = new File(storeDirectory, `gutendex-${safeId}.epub`);
     const localUri = destinationFile.uri;
 
     const existing = await getBookByUri(localUri);
     if (existing) {
-      const existingLibraryBook = existing.toLibraryItem();
-      setPreparedLibraryBook(existingLibraryBook);
-      return existingLibraryBook;
+      setPreparedLibraryBook(existing.toLibraryItem());
+      setIsSaved(true);
+      return existing.toLibraryItem();
     }
 
     if (!destinationFile.exists) {
@@ -143,49 +221,96 @@ export default function BookDetailScreen() {
     const importedPayload = await extractEpubImportPayload(loadedZip);
 
     const importedBook = Book.fromImport({
-      title: importedPayload.title || book.title,
+      title: importedPayload.title || gutendexBook.title,
       author: importedPayload.author || displayAuthor,
       cover: importedPayload.cover || coverUrl || null,
       uri: localUri,
       basePath: importedPayload.basePath,
       chapters: importedPayload.chapters,
+      metadata: {
+        summary: gutendexBook.summaries?.[0] || null,
+        downloadCount: gutendexBook.download_count ?? null,
+        language: gutendexBook.languages?.[0] || null,
+        subjects: gutendexBook.subjects || [],
+        sourceId: gutendexBook.id,
+      },
     });
 
-    await saveBook(importedBook);
+    // Do not persist here; store DTO transiently and present prepared library item
+    setTransientDto(importedBook.id, importedBook.toDTO());
     const libraryBook = importedBook.toLibraryItem();
+    setBookDTO(importedBook.toDTO());
     setPreparedLibraryBook(libraryBook);
+    setIsSaved(false);
     return libraryBook;
-  }, [book.id, book.title, coverUrl, displayAuthor, epubUrl]);
+  }, [bookDTO, epubUrl, gutendexBook, preparedLibraryBook, displayAuthor, coverUrl]);
 
-  useEffect(() => {
-    let active = true;
-    const run = async () => {
-      try {
-        setIsPreparingBook(true);
-        const result = await ensureBookPrepared();
-        if (!active || !result) return;
-      } catch (error) {
-        console.warn('[BookDescription] Auto import failed:', error);
-      } finally {
-        if (active) setIsPreparingBook(false);
+  // Removed automatic prepare-on-mount. Book will only be prepared when
+  // the user taps Save (bookmark) or Read Now.
+
+  const handleSave = useCallback(async () => {
+    try {
+      setIsPreparingBook(true);
+      const libraryBook = preparedLibraryBook ?? (await ensureBookPrepared());
+      if (!libraryBook) return;
+
+      let bookInstance: Book | null = null;
+      if (bookDTO) {
+        bookInstance = Book.fromDTO(bookDTO);
+      } else {
+        const transient = getTransientDto<BookDTO>(libraryBook.id);
+        if (transient) bookInstance = Book.fromDTO(transient);
+        else {
+          const persisted = await getBookById(libraryBook.id);
+          if (persisted) bookInstance = persisted;
+        }
       }
-    };
 
-    void run();
-    return () => {
-      active = false;
-    };
-  }, [ensureBookPrepared]);
+      if (bookInstance) {
+        await saveBook(bookInstance);
+        // persisted — reflect saved state
+        setPreparedLibraryBook(bookInstance.toLibraryItem());
+        setBookDTO(bookInstance.toDTO());
+        deleteTransientDto(bookInstance.id);
+        setIsSaved(true);
+      }
+    } catch (error) {
+      console.warn('[BookDescription] Save failed:', error);
+    } finally {
+      setIsPreparingBook(false);
+    }
+  }, [ensureBookPrepared, preparedLibraryBook, bookDTO]);
 
   const handleReadNow = useCallback(async () => {
     try {
       setIsPreparingBook(true);
       const libraryBook = preparedLibraryBook ?? (await ensureBookPrepared());
+      if (!libraryBook) return;
 
-      if (!libraryBook) {
-        return;
+      let bookInstance: Book | null = null;
+      if (bookDTO) {
+        bookInstance = Book.fromDTO(bookDTO);
+      } else {
+        const transient = getTransientDto<BookDTO>(libraryBook.id);
+        if (transient) bookInstance = Book.fromDTO(transient);
+        else {
+          const persisted = await getBookById(libraryBook.id);
+          if (persisted) bookInstance = persisted;
+        }
       }
 
+      if (bookInstance) {
+        await saveBook(bookInstance);
+        deleteTransientDto(bookInstance.id);
+      }
+
+      const resumeProgress =
+        bookInstance?.readingProgress ||
+        bookDTO?.readingProgress ||
+        routeProgress ||
+        null;
+
+      setIsSaved(true);
       router.push({
         pathname: '/reader',
         params: {
@@ -194,6 +319,15 @@ export default function BookDetailScreen() {
           author: libraryBook.author,
           cover: libraryBook.cover || undefined,
           uri: libraryBook.uri,
+          resumeChapterIndex:
+            resumeProgress && Number.isFinite(resumeProgress.lastChapterIndex)
+              ? String(resumeProgress.lastChapterIndex)
+              : undefined,
+          resumeChunkIndex:
+            resumeProgress && Number.isFinite(resumeProgress.lastChunkIndex)
+              ? String(resumeProgress.lastChunkIndex)
+              : undefined,
+          resumeChapterHref: resumeProgress?.lastChapterHref || undefined,
         },
       });
     } catch (error) {
@@ -201,7 +335,24 @@ export default function BookDetailScreen() {
     } finally {
       setIsPreparingBook(false);
     }
-  }, [ensureBookPrepared, preparedLibraryBook, router]);
+  }, [ensureBookPrepared, preparedLibraryBook, bookDTO, routeProgress, router]);
+
+  const hasResumeProgress = useMemo(() => {
+    const progress = bookDTO?.readingProgress || routeProgress || null;
+    if (!progress) return false;
+    return progress.lastChapterIndex >= 0 && progress.lastChunkIndex >= 0;
+  }, [bookDTO?.readingProgress, routeProgress]);
+
+  if (!hasBookData) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="light-content" />
+        <View style={{ padding: 20 }}>
+          <Text style={{ color: '#fff' }}>No book data provided.</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -213,8 +364,16 @@ export default function BookDetailScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
           <Ionicons name="chevron-back" size={24} color="#FFF" />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.iconButton}>
-          <Ionicons name="bookmark-outline" size={22} color="#FFF" />
+        <TouchableOpacity
+          onPress={handleSave}
+          style={styles.iconButton}
+          disabled={isPreparingBook}
+        >
+          <Ionicons
+            name={preparedLibraryBook ? 'bookmark' : 'bookmark-outline'}
+            size={22}
+            color="#FFF"
+          />
         </TouchableOpacity>
       </View>
 
@@ -223,21 +382,21 @@ export default function BookDetailScreen() {
         {/* Hero Section: Cover, Title, Author */}
         <View style={styles.heroSection}>
           <View style={styles.coverShadow}>
-            <Image source={{ uri: coverUrl }} style={styles.coverImage} />
+            <Image source={{ uri: coverUrl || undefined }} style={styles.coverImage} />
           </View>
-          <Text style={styles.title}>{book.title}</Text>
+          <Text style={styles.title}>{displayTitle}</Text>
           <Text style={styles.author}>{displayAuthor}</Text>
         </View>
 
         {/* Stats Row */}
         <View style={styles.statsRow}>
           <View style={styles.statBox}>
-            <Text style={styles.statValue}>{formatNumber(book.download_count)}</Text>
+            <Text style={styles.statValue}>{formatNumber(displayDownloadCount)}</Text>
             <Text style={styles.statLabel}>Downloads</Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statBox}>
-            <Text style={styles.statValue}>{book.languages[0]?.toUpperCase()}</Text>
+            <Text style={styles.statValue}>{displayLanguage}</Text>
             <Text style={styles.statLabel}>Language</Text>
           </View>
           <View style={styles.statDivider} />
@@ -255,7 +414,7 @@ export default function BookDetailScreen() {
             ) : (
               <>
                 <Ionicons name="book" size={20} color="#000" style={{ marginRight: 8 }} />
-                <Text style={styles.primaryButtonText}>Read Now</Text>
+                <Text style={styles.primaryButtonText}>{hasResumeProgress ? 'Continue Reading' : 'Read Now'}</Text>
               </>
             )}
           </TouchableOpacity>
@@ -284,7 +443,7 @@ export default function BookDetailScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Genres & Tags</Text>
           <View style={styles.tagsContainer}>
-            {displayTags.map((tag, index) => (
+            {displayTags.map((tag: string, index: number) => (
               <View key={index} style={styles.tagBadge}>
                 <Text style={styles.tagText}>{tag}</Text>
               </View>

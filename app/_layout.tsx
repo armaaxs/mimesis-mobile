@@ -16,6 +16,7 @@ export default function RootLayout() {
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="reader" options={{ presentation: 'card', title: 'Reader', headerShown: true }} />
+        <Stack.Screen name="search" options={{ presentation: 'card', headerShown: false }} />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

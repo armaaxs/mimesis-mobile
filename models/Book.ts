@@ -6,6 +6,21 @@ export interface BookChapterDTO {
   plainText: string;
 }
 
+export interface BookMetadataDTO {
+  summary: string | null;
+  downloadCount: number | null;
+  language: string | null;
+  subjects: string[];
+  sourceId: number | null;
+}
+
+export interface BookReadingProgressDTO {
+  lastChapterIndex: number;
+  lastChunkIndex: number;
+  lastChapterHref: string | null;
+  lastReadAt: number;
+}
+
 export interface BookDTO {
   id: string;
   title: string;
@@ -14,6 +29,8 @@ export interface BookDTO {
   uri: string;
   basePath: string;
   chapters: BookChapterDTO[];
+  metadata: BookMetadataDTO | null;
+  readingProgress: BookReadingProgressDTO | null;
   createdAt: number;
 }
 
@@ -23,6 +40,8 @@ export interface LibraryBookItem {
   author: string;
   cover: string | null;
   uri: string;
+  metadata?: BookMetadataDTO | null;
+  readingProgress?: BookReadingProgressDTO | null;
 }
 
 interface CreateBookInput {
@@ -32,6 +51,8 @@ interface CreateBookInput {
   uri: string;
   basePath: string;
   chapters: BookChapterDTO[];
+  metadata?: BookMetadataDTO | null;
+  readingProgress?: BookReadingProgressDTO | null;
 }
 
 export class Book {
@@ -42,6 +63,8 @@ export class Book {
   readonly uri: string;
   readonly basePath: string;
   readonly chapters: BookChapterDTO[];
+  readonly metadata: BookMetadataDTO | null;
+  readonly readingProgress: BookReadingProgressDTO | null;
   readonly createdAt: number;
 
   constructor(dto: BookDTO) {
@@ -52,6 +75,8 @@ export class Book {
     this.uri = dto.uri;
     this.basePath = dto.basePath;
     this.chapters = dto.chapters;
+    this.metadata = dto.metadata ?? null;
+    this.readingProgress = dto.readingProgress ?? null;
     this.createdAt = dto.createdAt;
   }
 
@@ -67,6 +92,8 @@ export class Book {
       uri: input.uri,
       basePath: input.basePath,
       chapters: input.chapters,
+      metadata: input.metadata ?? null,
+      readingProgress: input.readingProgress ?? null,
       createdAt: now,
     });
   }
@@ -84,6 +111,8 @@ export class Book {
       uri: this.uri,
       basePath: this.basePath,
       chapters: this.chapters,
+      metadata: this.metadata,
+      readingProgress: this.readingProgress,
       createdAt: this.createdAt,
     };
   }
@@ -95,6 +124,8 @@ export class Book {
       author: this.author,
       cover: this.cover,
       uri: this.uri,
+      metadata: this.metadata,
+      readingProgress: this.readingProgress,
     };
   }
 }

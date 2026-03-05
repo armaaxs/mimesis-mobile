@@ -1,4 +1,4 @@
-import { Book, BookDTO, LibraryBookItem } from '@/models/Book';
+import { Book, BookDTO, BookReadingProgressDTO, LibraryBookItem } from '@/models/Book';
 import { Directory, File, Paths } from 'expo-file-system';
 
 const STORE_DIR_NAME = 'mimesis-books';
@@ -64,6 +64,8 @@ export const saveBook = async (book: Book): Promise<void> => {
       author: book.author,
       cover: book.cover,
       uri: book.uri,
+      metadata: book.metadata,
+      readingProgress: book.readingProgress,
       createdAt: book.createdAt,
     },
   ]);
@@ -84,7 +86,53 @@ export const getBookById = async (bookId: string): Promise<Book | null> => {
     return null;
   }
 
-  return Book.fromDTO(dto);
+  return Book.fromDTO({
+    ...dto,
+    metadata: dto.metadata ?? null,
+    readingProgress: dto.readingProgress ?? null,
+  });
+};
+
+export const saveBookReadingProgress = async (
+  bookId: string,
+  progress: BookReadingProgressDTO,
+): Promise<void> => {
+  ensureStore();
+
+  const bookFile = getBookFile(bookId);
+  if (!bookFile.exists) {
+    return;
+  }
+
+  const dto = await readJSON<BookDTO | null>(bookFile, null);
+  if (!dto) {
+    return;
+  }
+
+  const nextDto: BookDTO = {
+    ...dto,
+    metadata: dto.metadata ?? null,
+    readingProgress: progress,
+  };
+  writeJSON(bookFile, nextDto);
+
+  const currentCatalog = await readJSON<BookCatalogItem[]>(catalogFile, []);
+  const existing = currentCatalog.find((item) => item.id === bookId);
+  const nextCatalog = sortCatalog([
+    ...currentCatalog.filter((item) => item.id !== bookId),
+    {
+      id: bookId,
+      title: existing?.title ?? nextDto.title,
+      author: existing?.author ?? nextDto.author,
+      cover: existing?.cover ?? nextDto.cover,
+      uri: existing?.uri ?? nextDto.uri,
+      metadata: existing?.metadata ?? nextDto.metadata,
+      readingProgress: progress,
+      createdAt: existing?.createdAt ?? nextDto.createdAt,
+    },
+  ]);
+
+  writeJSON(catalogFile, nextCatalog);
 };
 
 export const getBookByUri = async (uri: string): Promise<Book | null> => {
@@ -108,5 +156,7 @@ export const listBookCatalog = async (): Promise<LibraryBookItem[]> => {
     author: item.author,
     cover: item.cover,
     uri: item.uri,
+    metadata: item.metadata,
+    readingProgress: item.readingProgress ?? null,
   }));
 };
