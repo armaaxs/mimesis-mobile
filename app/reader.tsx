@@ -4,7 +4,7 @@ import Screenheader from '@/components/Screenheader.component';
 import { useTTSQueuePlayer } from '@/hooks/use-tts-queue-player';
 import { Book } from '@/models/Book';
 import { getBookById, getBookByUri } from '@/utils/bookRepository';
-import { extractRawText } from '@/utils/extractRawText';
+import { extractRawText, stripProjectGutenbergPhrases } from '@/utils/extractRawText';
 import { htmlToStyledBlocks } from '@/utils/htmlToStyledBlocks';
 import { getChapterText, parseEpub } from '@/utils/epubparser';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,6 +23,23 @@ type ReaderChapter = {
   title?: string;
   html?: string;
   plainText?: string;
+};
+
+const isSkippableChapter = (chapter: ReaderChapter): boolean => {
+  const normalizedTitle = (chapter.title || '')
+    .toLowerCase()
+    .replace(/["'“”‘’]/g, '')
+    .trim();
+  const normalizedHref = (chapter.href || '').toLowerCase();
+
+  return (
+    normalizedTitle === 'cover' ||
+    normalizedTitle === 'book cover' ||
+    normalizedTitle === 'front cover' ||
+    normalizedHref.includes('cover.xhtml') ||
+    normalizedHref.includes('cover.html') ||
+    normalizedHref.endsWith('/cover')
+  );
 };
 
 const buildFallbackChapterTitle = (chapter: ReaderChapter, index: number): string => {
@@ -68,7 +85,7 @@ export default function Reader() {
   const [bookData, setBookData] = useState<any>(null);
   const [persistedBook, setPersistedBook] = useState<Book | null>(null);
   const [hasResolvedPersistedBook, setHasResolvedPersistedBook] = useState(false);
-  const [currentChapterNo, setCurrentChapterNo] = useState(1);
+  const [currentChapterNo, setCurrentChapterNo] = useState(0);
   const [zipInstance, setZipInstance] = useState<JSZip | null>(null);
   const [currentHtml, setCurrentHtml] = useState<string>('');
   const [isTextMode, setIsTextMode] = useState(false);
@@ -159,35 +176,67 @@ export default function Reader() {
     void loadBook();
   }, [loadBook]);
 
+  const isApiFetchedBook = useMemo(() => {
+    const persistedUri = (persistedBook?.uri || '').toLowerCase();
+    const routeUri = (params.uri || '').toLowerCase();
+
+    return (
+      persistedUri.includes('gutendex-') ||
+      routeUri.includes('gutendex-') ||
+      routeUri.includes('gutenberg.org')
+    );
+  }, [params.uri, persistedBook?.uri]);
+
+  const menuChapters = useMemo(() => {
+    const sourceChapters = (persistedBook?.chapters || bookData?.chapters || []) as ReaderChapter[];
+
+    const normalized = sourceChapters.map((chapter, index) => ({
+      ...chapter,
+      title: buildFallbackChapterTitle(chapter, index),
+    }));
+
+    const withoutCover = normalized.filter((chapter) => !isSkippableChapter(chapter));
+    return isApiFetchedBook ? withoutCover.slice(1) : withoutCover;
+  }, [bookData?.chapters, isApiFetchedBook, persistedBook?.chapters]);
+
   useEffect(() => {
     const fetchText = async () => {
-      if (persistedBook) {
-        const chapter = persistedBook.chapters[currentChapterNo];
-        setCurrentHtml(chapter?.html || '');
+      const selectedChapter = menuChapters[currentChapterNo];
+      if (!selectedChapter) {
+        setCurrentHtml('');
         return;
       }
 
-      if (zipInstance && bookData && bookData.chapters[currentChapterNo]) {
-        const fullPath = bookData.basePath + bookData.chapters[currentChapterNo].href;
+      if (persistedBook) {
+        setCurrentHtml(selectedChapter.html || '');
+        return;
+      }
+
+      if (zipInstance && bookData && selectedChapter.href) {
+        const fullPath = bookData.basePath + selectedChapter.href;
         const text = await getChapterText(zipInstance, fullPath);
         setCurrentHtml(text);
       }
     };
     void fetchText();
-  }, [bookData, currentChapterNo, persistedBook, zipInstance]);
+  }, [bookData, currentChapterNo, menuChapters, persistedBook, zipInstance]);
+
+  useEffect(() => {
+    if (menuChapters.length === 0) {
+      if (currentChapterNo !== 0) {
+        setCurrentChapterNo(0);
+      }
+      return;
+    }
+
+    if (currentChapterNo >= menuChapters.length) {
+      setCurrentChapterNo(menuChapters.length - 1);
+    }
+  }, [currentChapterNo, menuChapters.length]);
 
   const handleIndexOpen = () => {
     bottomSheetRef.current?.expand(); // Open the sheet instead of navigating
   };
-
-  const menuChapters = useMemo(() => {
-    const sourceChapters = (persistedBook?.chapters || bookData?.chapters || []) as ReaderChapter[];
-
-    return sourceChapters.map((chapter, index) => ({
-      ...chapter,
-      title: buildFallbackChapterTitle(chapter, index),
-    }));
-  }, [bookData?.chapters, persistedBook?.chapters]);
 
   const rawChapterText = useMemo(() => extractRawText(currentHtml), [currentHtml]);
 
@@ -211,10 +260,20 @@ export default function Reader() {
   const controlsDisabled = !!isDownloading;
   const seekerProgress = totalChunks <= 1 ? 0 : currentChunkIndex / (totalChunks - 1);
 
-  const styledBlocks = useMemo(
-    () => htmlToStyledBlocks(currentHtml, chunkTexts),
-    [currentHtml, chunkTexts],
-  );
+  const styledBlocks = useMemo(() => {
+    const blocks = htmlToStyledBlocks(currentHtml, chunkTexts);
+    return blocks
+      .map((block) => ({
+        ...block,
+        runs: block.runs
+          .map((run) => ({
+            ...run,
+            text: stripProjectGutenbergPhrases(run.text),
+          }))
+          .filter((run) => run.text.trim().length > 0),
+      }))
+      .filter((block) => block.runs.length > 0);
+  }, [currentHtml, chunkTexts]);
 
   const currentChapterTitle = useMemo(() => {
     return menuChapters[currentChapterNo]?.title || `Chapter ${currentChapterNo + 1}`;

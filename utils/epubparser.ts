@@ -1,6 +1,6 @@
 import JSZip from 'jszip';
 import { XMLParser } from 'fast-xml-parser';
-import { extractRawText } from './extractRawText';
+import { extractRawText, stripProjectGutenbergPhrases } from './extractRawText';
 
 const xmlParser = new XMLParser({
   ignoreAttributes: false,
@@ -29,6 +29,77 @@ export interface ImportedEpubPayload {
   basePath: string;
   chapters: ImportedEpubChapter[];
 }
+
+const looksLikeGutenbergLicenseChapter = (chapter: {
+  href?: string;
+  title?: string;
+  plainText?: string;
+}): boolean => {
+  const href = (chapter.href || '').toLowerCase();
+  const title = (chapter.title || '').toLowerCase();
+  const plainText = (chapter.plainText || '').toLowerCase();
+
+  const titleOrHrefSignals =
+    href.includes('license') ||
+    href.includes('gutenberg') ||
+    title.includes('project gutenberg license') ||
+    title.includes('gutenberg license') ||
+    title === 'license' ||
+    title.endsWith(' license');
+
+  const textSignals =
+    plainText.includes('this ebook is for the use of anyone anywhere') ||
+    plainText.includes('at no cost and with almost no restrictions whatsoever') ||
+    plainText.includes('before using this ebook');
+
+  return titleOrHrefSignals || textSignals;
+};
+
+const pruneTrailingGutenbergLicenseChapters = <T extends { href?: string; title?: string; plainText?: string }>(
+  chapters: T[]
+): T[] => {
+  const pruned = [...chapters];
+
+  while (pruned.length > 0 && looksLikeGutenbergLicenseChapter(pruned[pruned.length - 1])) {
+    pruned.pop();
+  }
+
+  return pruned;
+};
+
+const looksLikeCoverChapter = (chapter: {
+  href?: string;
+  title?: string;
+  plainText?: string;
+}): boolean => {
+  const href = (chapter.href || '').toLowerCase();
+  const title = (chapter.title || '').toLowerCase().trim();
+  const plainText = (chapter.plainText || '').toLowerCase();
+
+  const normalizedTitle = title.replace(/["'“”‘’]/g, '').trim();
+
+  const titleSignals =
+    normalizedTitle === 'cover' ||
+    normalizedTitle === 'book cover' ||
+    normalizedTitle === 'front cover';
+
+  const hrefSignals =
+    /(^|\/)(cover|coverpage|titlepage)(\.[a-z0-9]+)?$/i.test(href) ||
+    href.includes('cover.xhtml') ||
+    href.includes('cover.html') ||
+    href.includes('titlepage.xhtml') ||
+    href.includes('titlepage.html');
+
+  const textSignals =
+    plainText.trim() === 'cover' ||
+    plainText.trim() === 'book cover';
+
+  return titleSignals || hrefSignals || textSignals;
+};
+
+const stripCoverChapters = <T extends { href?: string; title?: string; plainText?: string }>(
+  chapters: T[]
+): T[] => chapters.filter((chapter) => !looksLikeCoverChapter(chapter));
 
 const resolveEpubPath = (basePath: string, href: string): string => {
   if (!href) return '';
@@ -312,10 +383,12 @@ export const parseEpub = async (zip: JSZip): Promise<EpubStructure> => {
     })
       .filter((chapter): chapter is { id: string; href: string } => Boolean(chapter?.href));
 
+    const filteredChapters = pruneTrailingGutenbergLicenseChapters(stripCoverChapters(chapters));
+
     return {
       title: getVal((metadata as Record<string, unknown>)['dc:title']) || 'Unknown Title',
       author: getVal((metadata as Record<string, unknown>)['dc:creator']) || 'Unknown Author',
-      chapters,
+      chapters: filteredChapters,
       basePath,
     };
 
@@ -377,22 +450,25 @@ export const extractEpubImportPayload = async (zip: JSZip): Promise<ImportedEpub
 
     const fullPath = resolveEpubPath(basePath, href);
     const html = await getChapterText(zip, fullPath);
+    const sanitizedHtml = stripProjectGutenbergPhrases(html);
 
     chapters.push({
       id: idref,
       href,
       title: tocTitleMap.get(normalizeComparableHref(href)),
-      html,
-      plainText: extractRawText(html),
+      html: sanitizedHtml,
+      plainText: extractRawText(sanitizedHtml),
     });
   }
+
+  const filteredChapters = pruneTrailingGutenbergLicenseChapters(stripCoverChapters(chapters));
 
   return {
     title: getVal((metadata as Record<string, unknown>)['dc:title']) || 'Unknown Title',
     author: getVal((metadata as Record<string, unknown>)['dc:creator']) || 'Unknown Author',
     cover,
     basePath,
-    chapters,
+    chapters: filteredChapters,
   };
 };
 
@@ -400,7 +476,7 @@ export const getChapterText = async (zip: JSZip, href: string) => { // MAKE SURE
   const file = zip.file(href); // Look up the file by the path you found
   if (file) {
     const htmlContent = await file.async("text"); // Extract the raw HTML
-    return htmlContent;
+    return stripProjectGutenbergPhrases(htmlContent);
   }
-  return "Chapter not found";
+  return stripProjectGutenbergPhrases("Chapter not found");
 };

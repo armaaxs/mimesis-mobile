@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   StyleSheet,
   Text,
@@ -9,9 +9,16 @@ import {
   SafeAreaView,
   StatusBar,
   Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Buffer } from 'buffer';
+import { Directory, File, Paths } from 'expo-file-system';
+import JSZip from 'jszip';
+import { Book, LibraryBookItem } from '@/models/Book';
+import { getBookByUri, saveBook } from '@/utils/bookRepository';
+import { extractEpubImportPayload } from '@/utils/epubparser';
 
 // Types based on your JSON
 type Author = { name: string; birth_year: number; death_year: number };
@@ -50,6 +57,25 @@ export default function BookDetailScreen() {
 
   console.log('[BookDescription] received book param ->', book ? { id: book.id, title: book.title } : null);
   const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
+  const [isPreparingBook, setIsPreparingBook] = useState(false);
+  const [preparedLibraryBook, setPreparedLibraryBook] = useState<LibraryBookItem | null>(null);
+
+  const displayAuthor = useMemo(() => {
+    if (!book) return 'Unknown Author';
+    const rawAuthor = book.authors[0]?.name || 'Unknown Author';
+    return rawAuthor.includes(',')
+      ? rawAuthor.split(',').reverse().join(' ').trim()
+      : rawAuthor;
+  }, [book]);
+
+  const epubUrl = useMemo(() => {
+    if (!book) return null;
+    return (
+      book.formats['application/epub+zip'] ||
+      book.formats['application/octet-stream'] ||
+      null
+    );
+  }, [book]);
 
   // If no book data is passed (for testing/safety)
   if (!book) {
@@ -65,10 +91,6 @@ export default function BookDetailScreen() {
 
   // --- Data Cleaning ---
   const coverUrl = book.formats['image/jpeg'];
-  const rawAuthor = book.authors[0]?.name || 'Unknown Author';
-  const displayAuthor = rawAuthor.includes(',') 
-    ? rawAuthor.split(',').reverse().join(' ').trim() 
-    : rawAuthor;
 
   // Clean up the Gutenberg auto-generated text warning
   const cleanSummary = book.summaries[0]?.replace(
@@ -80,6 +102,106 @@ export default function BookDetailScreen() {
   
   // Take only the first 4 subjects for a clean UI
   const displayTags = book.subjects.slice(0, 4).map(sub => sub.split(' -- ')[0]);
+
+  const ensureBookPrepared = useCallback(async (): Promise<LibraryBookItem | null> => {
+    if (!epubUrl) {
+      console.warn('[BookDescription] No EPUB URL available for this book');
+      return null;
+    }
+
+    const storeDirectory = new Directory(Paths.document, 'mimesis-books');
+    if (!storeDirectory.exists) {
+      storeDirectory.create({ intermediates: true, idempotent: true });
+    }
+
+    const safeId = String(book.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const destinationFile = new File(storeDirectory, `gutendex-${safeId}.epub`);
+    const localUri = destinationFile.uri;
+
+    const existing = await getBookByUri(localUri);
+    if (existing) {
+      const existingLibraryBook = existing.toLibraryItem();
+      setPreparedLibraryBook(existingLibraryBook);
+      return existingLibraryBook;
+    }
+
+    if (!destinationFile.exists) {
+      const response = await fetch(epubUrl);
+      if (!response.ok) {
+        throw new Error(`EPUB download failed (${response.status})`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const base64 = Buffer.from(arrayBuffer).toString('base64');
+
+      destinationFile.create({ intermediates: true, overwrite: true });
+      destinationFile.write(base64, { encoding: 'base64' });
+    }
+
+    const base64Data = await destinationFile.base64();
+    const loadedZip = await JSZip.loadAsync(base64Data, { base64: true });
+    const importedPayload = await extractEpubImportPayload(loadedZip);
+
+    const importedBook = Book.fromImport({
+      title: importedPayload.title || book.title,
+      author: importedPayload.author || displayAuthor,
+      cover: importedPayload.cover || coverUrl || null,
+      uri: localUri,
+      basePath: importedPayload.basePath,
+      chapters: importedPayload.chapters,
+    });
+
+    await saveBook(importedBook);
+    const libraryBook = importedBook.toLibraryItem();
+    setPreparedLibraryBook(libraryBook);
+    return libraryBook;
+  }, [book.id, book.title, coverUrl, displayAuthor, epubUrl]);
+
+  useEffect(() => {
+    let active = true;
+    const run = async () => {
+      try {
+        setIsPreparingBook(true);
+        const result = await ensureBookPrepared();
+        if (!active || !result) return;
+      } catch (error) {
+        console.warn('[BookDescription] Auto import failed:', error);
+      } finally {
+        if (active) setIsPreparingBook(false);
+      }
+    };
+
+    void run();
+    return () => {
+      active = false;
+    };
+  }, [ensureBookPrepared]);
+
+  const handleReadNow = useCallback(async () => {
+    try {
+      setIsPreparingBook(true);
+      const libraryBook = preparedLibraryBook ?? (await ensureBookPrepared());
+
+      if (!libraryBook) {
+        return;
+      }
+
+      router.push({
+        pathname: '/reader',
+        params: {
+          id: libraryBook.id,
+          title: libraryBook.title,
+          author: libraryBook.author,
+          cover: libraryBook.cover || undefined,
+          uri: libraryBook.uri,
+        },
+      });
+    } catch (error) {
+      console.warn('[BookDescription] Read now failed:', error);
+    } finally {
+      setIsPreparingBook(false);
+    }
+  }, [ensureBookPrepared, preparedLibraryBook, router]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -127,9 +249,15 @@ export default function BookDetailScreen() {
 
         {/* Action Buttons */}
         <View style={styles.actionRow}>
-          <TouchableOpacity style={styles.primaryButton}>
-            <Ionicons name="book" size={20} color="#000" style={{ marginRight: 8 }} />
-            <Text style={styles.primaryButtonText}>Read Now</Text>
+          <TouchableOpacity style={styles.primaryButton} onPress={handleReadNow} disabled={isPreparingBook}>
+            {isPreparingBook ? (
+              <ActivityIndicator color="#000" />
+            ) : (
+              <>
+                <Ionicons name="book" size={20} color="#000" style={{ marginRight: 8 }} />
+                <Text style={styles.primaryButtonText}>Read Now</Text>
+              </>
+            )}
           </TouchableOpacity>
           <TouchableOpacity style={styles.secondaryButton}>
             <Ionicons name="download-outline" size={24} color="#FFF" />

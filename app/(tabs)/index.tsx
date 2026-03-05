@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View, FlatList, ViewStyle, TextStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { BookCard, Book as LibraryBook } from '../../components/BookCard.components';
 import { AddBookCard } from '../../components/AddBookCard.component';
 import { File } from 'expo-file-system';
@@ -17,6 +17,29 @@ const BOOKS: LibraryBook[] = [
   { id: '4', title: 'Normal People', author: 'Sally Rooney', cover: 'https://covers.openlibrary.org/b/id/10531551-L.jpg' , uri:''},
 ];
 
+const dedupeBooks = (items: LibraryBook[]): LibraryBook[] => {
+  const seen = new Set<string>();
+  const result: LibraryBook[] = [];
+
+  for (const book of items) {
+    const uri = (book.uri || '').trim();
+    const key = uri
+      ? `uri:${uri}`
+      : (book.id || '').trim()
+        ? `id:${book.id.trim()}`
+        : `meta:${book.title.trim().toLowerCase()}|${book.author.trim().toLowerCase()}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(book);
+  }
+
+  return result;
+};
+
 export default function LibraryScreen() {
   const router = useRouter();
   const [books, setBooks] = React.useState<LibraryBook[]>(BOOKS);
@@ -29,14 +52,25 @@ export default function LibraryScreen() {
     </View>
   );
 
-  React.useEffect(() => {
-    const hydrateImportedBooks = async () => {
-      const importedBooks = await listBookCatalog();
-      setBooks([...importedBooks, ...BOOKS]);
-    };
+  useFocusEffect(
+    React.useCallback(() => {
+      let isActive = true;
 
-    void hydrateImportedBooks();
-  }, []);
+      const hydrateImportedBooks = async () => {
+        const importedBooks = await listBookCatalog();
+        if (!isActive) {
+          return;
+        }
+        setBooks(dedupeBooks([...importedBooks, ...BOOKS]));
+      };
+
+      void hydrateImportedBooks();
+
+      return () => {
+        isActive = false;
+      };
+    }, [])
+  );
 
   const handleBookAdded = async (uri: string, name: string) => {
     try {
@@ -57,10 +91,7 @@ export default function LibraryScreen() {
       await saveBook(importedBook);
 
       const libraryBook = importedBook.toLibraryItem();
-      setBooks((previousBooks) => [
-        libraryBook,
-        ...previousBooks.filter((book) => book.id !== libraryBook.id),
-      ]);
+      setBooks((previousBooks) => dedupeBooks([libraryBook, ...previousBooks]));
     } catch (error) {
       console.error('Import pipeline failed:', error);
     }
