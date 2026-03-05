@@ -1,4 +1,5 @@
 import { Book, BookDTO, BookReadingProgressDTO, LibraryBookItem } from '@/models/Book';
+import { enqueueBookSync, enqueueUserBookDelete, enqueueUserBookSync } from '@/services/syncService';
 import { Directory, File, Paths } from 'expo-file-system';
 
 const STORE_DIR_NAME = 'mimesis-books';
@@ -71,6 +72,17 @@ export const saveBook = async (book: Book): Promise<void> => {
   ]);
 
   writeJSON(catalogFile, nextCatalog);
+
+  try {
+    await enqueueBookSync(dto);
+    await enqueueUserBookSync({
+      bookId: dto.id,
+      progress: dto.readingProgress,
+      isSaved: true,
+    });
+  } catch (error) {
+    console.warn('Failed to enqueue book sync operation:', error);
+  }
 };
 
 export const getBookById = async (bookId: string): Promise<Book | null> => {
@@ -96,6 +108,9 @@ export const getBookById = async (bookId: string): Promise<Book | null> => {
 export const saveBookReadingProgress = async (
   bookId: string,
   progress: BookReadingProgressDTO,
+  options?: {
+    skipSyncEnqueue?: boolean;
+  },
 ): Promise<void> => {
   ensureStore();
 
@@ -133,6 +148,18 @@ export const saveBookReadingProgress = async (
   ]);
 
   writeJSON(catalogFile, nextCatalog);
+
+  if (!options?.skipSyncEnqueue) {
+    try {
+      await enqueueUserBookSync({
+        bookId,
+        progress,
+        isSaved: true,
+      });
+    } catch (error) {
+      console.warn('Failed to enqueue progress sync operation:', error);
+    }
+  }
 };
 
 export const getBookByUri = async (uri: string): Promise<Book | null> => {
@@ -159,4 +186,30 @@ export const listBookCatalog = async (): Promise<LibraryBookItem[]> => {
     metadata: item.metadata,
     readingProgress: item.readingProgress ?? null,
   }));
+};
+
+export const deleteBook = async (
+  bookId: string,
+  options?: {
+    skipSyncEnqueue?: boolean;
+  }
+): Promise<void> => {
+  ensureStore();
+
+  const bookFile = getBookFile(bookId);
+  if (bookFile.exists) {
+    bookFile.delete();
+  }
+
+  const currentCatalog = await readJSON<BookCatalogItem[]>(catalogFile, []);
+  const nextCatalog = currentCatalog.filter((item) => item.id !== bookId);
+  writeJSON(catalogFile, nextCatalog);
+
+  if (!options?.skipSyncEnqueue) {
+    try {
+      await enqueueUserBookDelete(bookId);
+    } catch (error) {
+      console.warn('Failed to enqueue user_books delete operation:', error);
+    }
+  }
 };

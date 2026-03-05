@@ -81,7 +81,6 @@ export default function SearchScreen() {
 
   const [query, setQuery] = useState('');
   const [books, setBooks] = useState<SearchResultBook[]>([]);
-  const [nextUrl, setNextUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -124,7 +123,6 @@ export default function SearchScreen() {
       // Discard stale responses
       if (activeQuery.current !== q) return;
       setBooks((prev) => (append ? [...prev, ...result.books] : result.books));
-      setNextUrl(result.nextUrl);
       nextUrlRef.current = result.nextUrl;
     } catch (err) {
       if (activeQuery.current !== q) return;
@@ -142,7 +140,6 @@ export default function SearchScreen() {
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(() => {
       setBooks([]);
-      setNextUrl(null);
       nextUrlRef.current = null;
       void runSearch(query, false);
     }, DEBOUNCE_MS);
@@ -180,7 +177,7 @@ export default function SearchScreen() {
       ) : books.length > 0 ? (
         <Text style={styles.resultsLabel}>Results</Text>
       ) : query.trim() ? (
-        <Text style={styles.emptyText}>No results for "{query}"</Text>
+        <Text style={styles.emptyText}>No results for &quot;{query}&quot;</Text>
       ) : null}
     </View>
   );

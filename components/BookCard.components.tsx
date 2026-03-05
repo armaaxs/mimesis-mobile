@@ -1,4 +1,5 @@
 import React from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, Text, View, Image, TouchableOpacity, Dimensions, ViewStyle, ImageStyle, TextStyle } from 'react-native';
 
 const { width } = Dimensions.get('window');
@@ -15,12 +16,26 @@ export interface Book {
 interface BookCardProps {
   book: Book;
   onPress: () => void;
+  onLongPress?: () => void;
+  showDeleteAction?: boolean;
+  onDeletePress?: () => void;
 }
 
-export const BookCard: React.FC<BookCardProps> = ({ book, onPress }) => {
+export const BookCard: React.FC<BookCardProps> = ({
+  book,
+  onPress,
+  onLongPress,
+  showDeleteAction,
+  onDeletePress,
+}) => {
   return (
-    <TouchableOpacity style={styles.container} onPress={onPress} activeOpacity={0.7}>
+    <TouchableOpacity style={styles.container} onPress={onPress} onLongPress={onLongPress} activeOpacity={0.7}>
       <View style={styles.coverWrapper}>
+        {showDeleteAction && onDeletePress ? (
+          <TouchableOpacity style={styles.deleteButton} onPress={onDeletePress} activeOpacity={0.85}>
+            <Ionicons name="trash" size={16} color="#fff" />
+          </TouchableOpacity>
+        ) : null}
         {book.cover ? (
           <Image source={{ uri: book.cover }} style={styles.cover} resizeMode="cover" />
         ) : (
@@ -47,6 +62,7 @@ const styles = StyleSheet.create({
     aspectRatio: 2/3,
     backgroundColor: '#111',
     borderRadius: 2,
+    position: 'relative',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.5,
@@ -57,6 +73,18 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 2,
   } as ImageStyle,
+  deleteButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    zIndex: 3,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(190, 18, 60, 0.95)',
+  } as ViewStyle,
   placeholder: {
     flex: 1,
     justifyContent: 'center',

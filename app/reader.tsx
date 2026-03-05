@@ -4,6 +4,7 @@ import Screenheader from '@/components/Screenheader.component';
 import { useBackgroundMediaSession } from '@/hooks/use-background-media-session';
 import { useTTSQueuePlayer } from '@/hooks/use-tts-queue-player';
 import { Book, BookReadingProgressDTO } from '@/models/Book';
+import { pullUserBookProgressForBook } from '@/services/syncService';
 import { getBookById, getBookByUri, saveBookReadingProgress } from '@/utils/bookRepository';
 import { extractRawText } from '@/utils/extractRawText';
 import { htmlToStyledBlocks } from '@/utils/htmlToStyledBlocks';
@@ -101,6 +102,7 @@ export default function Reader() {
   const scrollMetricsRef = useRef({ yOffset: 0, viewportHeight: 0, contentHeight: 0 });
   const pendingAutoScrollChunkRef = useRef<number | null>(null);
   const [isResumeBootstrapDone, setIsResumeBootstrapDone] = useState(false);
+  const progressPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Bottom Sheet Ref and Snap Points
   const bottomSheetRef = useRef<BottomSheet>(null);
@@ -160,6 +162,26 @@ export default function Reader() {
 
         if (active) {
           setPersistedBook(savedBook);
+        }
+
+        if (savedBook?.id) {
+          void (async () => {
+            await pullUserBookProgressForBook(savedBook!.id);
+            const refreshedBook = await getBookById(savedBook!.id);
+            if (!active || !refreshedBook) {
+              return;
+            }
+
+            setPersistedBook((previous) => {
+              if (!previous || previous.id !== refreshedBook.id) {
+                return previous;
+              }
+
+              const previousReadAt = previous.readingProgress?.lastReadAt ?? 0;
+              const refreshedReadAt = refreshedBook.readingProgress?.lastReadAt ?? 0;
+              return refreshedReadAt > previousReadAt ? refreshedBook : previous;
+            });
+          })();
         }
       } catch (error) {
         console.warn('Reader persisted book lookup failed:', error);
@@ -246,11 +268,40 @@ export default function Reader() {
   const progressWriteInFlightRef = useRef(false);
   const pendingProgressRef = useRef<BookReadingProgressDTO | null>(null);
 
+  const flushPendingProgress = useCallback(async () => {
+    const bookId = persistedBook?.id;
+    if (!bookId || !pendingProgressRef.current || progressWriteInFlightRef.current) {
+      return;
+    }
+
+    progressWriteInFlightRef.current = true;
+
+    try {
+      const nextProgress = pendingProgressRef.current;
+      pendingProgressRef.current = null;
+
+      await saveBookReadingProgress(bookId, nextProgress);
+    } catch (error) {
+      console.warn('Failed to persist reading progress:', error);
+    } finally {
+      progressWriteInFlightRef.current = false;
+      if (pendingProgressRef.current) {
+        void flushPendingProgress();
+      }
+    }
+  }, [persistedBook?.id]);
+
   useEffect(() => {
     initialResumeAppliedRef.current = false;
     initialResumeChunkAppliedRef.current = false;
     resumeTargetChapterRef.current = 0;
     setIsResumeBootstrapDone(false);
+
+    pendingProgressRef.current = null;
+    if (progressPersistTimerRef.current) {
+      clearTimeout(progressPersistTimerRef.current);
+      progressPersistTimerRef.current = null;
+    }
   }, [persistedBook?.id]);
 
   useEffect(() => {
@@ -381,43 +432,47 @@ export default function Reader() {
     }
   }, [chunkTexts.length, currentChapterNo, resolvedResumeProgress, seekToChunk]);
 
-  const queuePersistReadingProgress = useCallback((progress: BookReadingProgressDTO) => {
+  const queuePersistReadingProgress = useCallback((
+    progress: BookReadingProgressDTO,
+    options?: {
+      immediate?: boolean;
+    },
+  ) => {
     const bookId = persistedBook?.id;
     if (!bookId) {
       return;
     }
 
     pendingProgressRef.current = progress;
-    if (progressWriteInFlightRef.current) {
+
+    if (options?.immediate) {
+      if (progressPersistTimerRef.current) {
+        clearTimeout(progressPersistTimerRef.current);
+        progressPersistTimerRef.current = null;
+      }
+      void flushPendingProgress();
       return;
     }
 
-    progressWriteInFlightRef.current = true;
-    void (async () => {
-      try {
-        while (pendingProgressRef.current) {
-          const nextProgress = pendingProgressRef.current;
-          pendingProgressRef.current = null;
+    if (progressPersistTimerRef.current) {
+      return;
+    }
 
-          await saveBookReadingProgress(bookId, nextProgress);
-          setPersistedBook((prev) => {
-            if (!prev || prev.id !== bookId) {
-              return prev;
-            }
+    progressPersistTimerRef.current = setTimeout(() => {
+      progressPersistTimerRef.current = null;
+      void flushPendingProgress();
+    }, 1200);
+  }, [flushPendingProgress, persistedBook?.id]);
 
-            return Book.fromDTO({
-              ...prev.toDTO(),
-              readingProgress: nextProgress,
-            });
-          });
-        }
-      } catch (error) {
-        console.warn('Failed to persist reading progress:', error);
-      } finally {
-        progressWriteInFlightRef.current = false;
+  useEffect(() => {
+    return () => {
+      if (progressPersistTimerRef.current) {
+        clearTimeout(progressPersistTimerRef.current);
+        progressPersistTimerRef.current = null;
       }
-    })();
-  }, [persistedBook?.id]);
+      void flushPendingProgress();
+    };
+  }, [flushPendingProgress]);
 
   useEffect(() => {
     if (!isResumeBootstrapDone || !persistedBook?.id || menuChapters.length === 0) {

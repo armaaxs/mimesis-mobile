@@ -1,9 +1,12 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
+import React, { useEffect } from 'react';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { DarkTheme, ThemeProvider } from '@react-navigation/native';
+import { type Href, Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useSupabaseAuth } from '@/hooks/use-supabase-auth';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -11,14 +14,52 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+  const { loading, isAuthenticated } = useSupabaseAuth();
+  const router = useRouter();
+  const segments = useSegments();
+
+  const inAuthRoute = (segments[0] as string | undefined) === 'auth';
+
+  useEffect(() => {
+    if (loading) {
+      return;
+    }
+
+    if (!isAuthenticated && !inAuthRoute) {
+      router.replace('/auth' as Href);
+      return;
+    }
+
+    if (isAuthenticated && inAuthRoute) {
+      router.replace('/(tabs)');
+    }
+  }, [inAuthRoute, isAuthenticated, loading, router]);
+
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DarkTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="reader" options={{ presentation: 'card', title: 'Reader', headerShown: true }} />
-        <Stack.Screen name="search" options={{ presentation: 'card', headerShown: false }} />
-      </Stack>
+      {loading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator color="#00bca3" size="large" />
+        </View>
+      ) : (
+        <Stack>
+          <Stack.Screen name="auth" options={{ headerShown: false }} />
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="reader" options={{ presentation: 'card', title: 'Reader', headerShown: true }} />
+          <Stack.Screen name="search" options={{ presentation: 'card', headerShown: false }} />
+          <Stack.Screen name="Settings" options={{ presentation: 'card', headerShown: false }} />
+        </Stack>
+      )}
       <StatusBar style="auto" />
     </ThemeProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});

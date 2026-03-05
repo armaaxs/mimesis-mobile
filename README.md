@@ -10,7 +10,19 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    npm install
    ```
 
-2. Start the app
+2. Configure Supabase OAuth
+
+    - Copy `.env.example` to `.env`.
+    - Set `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY`.
+    - In Supabase Dashboard → **Authentication** → **Providers**, enable:
+       - Google
+       - Apple
+    - In Supabase Dashboard → **Authentication** → **URL Configuration** add redirect URL(s):
+       - `audioz://oauth-callback`
+       - `exp://127.0.0.1:8081/--/oauth-callback` (or your local Expo host/port)
+    - In Google/Apple provider consoles, also add the same redirect URL(s) expected by Supabase.
+
+3. Start the app
 
    ```bash
    npx expo start

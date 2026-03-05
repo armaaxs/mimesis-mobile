@@ -8,7 +8,8 @@ import { AddBookCard } from '../../components/AddBookCard.component';
 import { File } from 'expo-file-system';
 import JSZip from 'jszip';
 import { Book } from '@/models/Book';
-import { listBookCatalog } from '@/utils/bookRepository';
+import { reconcileFromSupabase } from '@/services/syncService';
+import { deleteBook, listBookCatalog } from '@/utils/bookRepository';
 import { extractEpubImportPayload } from '@/utils/epubparser';
 import { setTransientDto } from '@/utils/transientDtoMap';
 
@@ -45,6 +46,7 @@ const dedupeBooks = (items: LibraryBook[]): LibraryBook[] => {
 export default function LibraryScreen() {
   const router = useRouter();
   const [books, setBooks] = React.useState<LibraryBook[]>(BOOKS);
+  const [deleteTargetBookId, setDeleteTargetBookId] = React.useState<string | null>(null);
   
   const renderHeader = () => (
     <View style={styles.header}>
@@ -72,10 +74,21 @@ export default function LibraryScreen() {
 
       const hydrateImportedBooks = async () => {
         const importedBooks = await listBookCatalog();
-        if (!isActive) {
-          return;
+
+        if (isActive) {
+          setBooks(dedupeBooks([...importedBooks, ...BOOKS]));
         }
-        setBooks(dedupeBooks([...importedBooks, ...BOOKS]));
+
+        if (importedBooks.length > 0) {
+          void (async () => {
+            await reconcileFromSupabase(importedBooks.map((item) => item.id));
+            const reconciledBooks = await listBookCatalog();
+            if (!isActive) {
+              return;
+            }
+            setBooks(dedupeBooks([...reconciledBooks, ...BOOKS]));
+          })();
+        }
       };
 
       void hydrateImportedBooks();
@@ -113,6 +126,11 @@ export default function LibraryScreen() {
   };
 
   const handleBookPress = (book: LibraryBook) => {
+    if (deleteTargetBookId === book.id) {
+      setDeleteTargetBookId(null);
+      return;
+    }
+
     const bookWithMetadata = book as LibraryBook & {
       metadata?: {
         summary: string | null;
@@ -144,6 +162,21 @@ export default function LibraryScreen() {
     });
   };
 
+  const handleDeleteBook = async (book: LibraryBook) => {
+    setDeleteTargetBookId(null);
+    setBooks((previousBooks) => previousBooks.filter((item) => item.id !== book.id));
+
+    try {
+      await deleteBook(book.id);
+      const refreshed = await listBookCatalog();
+      setBooks(dedupeBooks([...refreshed, ...BOOKS]));
+    } catch (error) {
+      console.warn('Failed to delete book:', error);
+      const restored = await listBookCatalog();
+      setBooks(dedupeBooks([...restored, ...BOOKS]));
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <FlatList
@@ -157,7 +190,15 @@ export default function LibraryScreen() {
         renderItem={({ item }) => (
           <BookCard 
             book={item}
-            onPress={() => handleBookPress(item)} 
+            onPress={() => handleBookPress(item)}
+            onLongPress={() => {
+              if (!item.uri) {
+                return;
+              }
+              setDeleteTargetBookId(item.id);
+            }}
+            showDeleteAction={Boolean(item.uri) && deleteTargetBookId === item.id}
+            onDeletePress={() => handleDeleteBook(item)}
           />
         )}
         keyExtractor={(item) => item.id}
@@ -209,7 +250,7 @@ const styles = StyleSheet.create({
     topRow: {
     marginTop: 8,
     flexDirection: 'row',
-    alignItems: 'end',
+      alignItems: 'flex-end',
     justifyContent: 'space-between',
   } as ViewStyle,
   settingsButton: {
