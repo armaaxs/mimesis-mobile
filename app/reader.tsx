@@ -250,7 +250,7 @@ export default function Reader() {
       return;
     }
 
-    const desiredCenterOffset = chunkTop - Math.max(0, (viewportHeight - layout.height) / 2);
+const desiredCenterOffset = chunkTop - Math.max(0, (viewportHeight - layout.height) / 2) + 100;
     const maxOffset = Math.max(0, contentHeight - viewportHeight);
     const targetOffset = Math.max(0, Math.min(desiredCenterOffset, maxOffset));
 
