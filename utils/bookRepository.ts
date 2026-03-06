@@ -49,7 +49,12 @@ const writeJSON = (file: File, data: unknown) => {
 const sortCatalog = (catalog: BookCatalogItem[]) =>
   [...catalog].sort((a, b) => b.createdAt - a.createdAt);
 
-export const saveBook = async (book: Book): Promise<void> => {
+export const saveBook = async (
+  book: Book,
+  options?: {
+    skipSyncEnqueue?: boolean;
+  },
+): Promise<void> => {
   ensureStore();
 
   const dto = book.toDTO();
@@ -73,15 +78,17 @@ export const saveBook = async (book: Book): Promise<void> => {
 
   writeJSON(catalogFile, nextCatalog);
 
-  try {
-    await enqueueBookSync(dto);
-    await enqueueUserBookSync({
-      bookId: dto.id,
-      progress: dto.readingProgress,
-      isSaved: true,
-    });
-  } catch (error) {
-    console.warn('Failed to enqueue book sync operation:', error);
+  if (!options?.skipSyncEnqueue) {
+    try {
+      await enqueueBookSync(dto);
+      await enqueueUserBookSync({
+        bookId: dto.id,
+        progress: dto.readingProgress,
+        isSaved: true,
+      });
+    } catch (error) {
+      console.warn('Failed to enqueue book sync operation:', error);
+    }
   }
 };
 
@@ -211,5 +218,11 @@ export const deleteBook = async (
     } catch (error) {
       console.warn('Failed to enqueue user_books delete operation:', error);
     }
+  }
+};
+
+export const clearLocalLibrary = async (): Promise<void> => {
+  if (storeDirectory.exists) {
+    storeDirectory.delete();
   }
 };

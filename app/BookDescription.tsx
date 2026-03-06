@@ -6,11 +6,11 @@ import {
   Image,
   ScrollView,
   TouchableOpacity,
-  SafeAreaView,
   StatusBar,
   Dimensions,
   ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Buffer } from 'buffer';
@@ -418,9 +418,9 @@ export default function BookDetailScreen() {
               </>
             )}
           </TouchableOpacity>
-          <TouchableOpacity style={styles.secondaryButton}>
+          {/* <TouchableOpacity style={styles.secondaryButton}>
             <Ionicons name="download-outline" size={24} color="#FFF" />
-          </TouchableOpacity>
+          </TouchableOpacity> */}
         </View>
 
         {/* Synopsis Section */}

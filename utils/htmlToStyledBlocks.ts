@@ -25,6 +25,15 @@ export interface StyledBlock {
   runs: InlineRun[];
 }
 
+type CanonicalRun = {
+  blockIndex: number;
+  bold: boolean;
+  italic: boolean;
+  text: string;
+  start: number;
+  end: number;
+};
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -171,76 +180,94 @@ export function htmlToStyledBlocks(html: string, chunks: string[], rawText: stri
   const rawBlocks = extractBlocks(html);
   if (rawBlocks.length === 0) return [];
 
-  // Normalize rawText identically to how chunkText() does internally.
-  // Chunks are exact substrings of this normalised string.
-  const normalizedRaw = rawText
-    .replace(/[\t\r]+/g, ' ')
-    .replace(/\n+/g, ' ')
-    .replace(/ {2,}/g, ' ')
-    .trim();
+  // Build a canonical text stream directly from extracted runs so each run
+  // gets deterministic start/end offsets and does not rely on brittle indexOf drift.
+  const canonicalRuns: CanonicalRun[] = [];
+  let canonicalText = '';
 
-  const charToChunk = buildCharToChunkMap(normalizedRaw, chunks);
+  const appendRunToCanonical = (runText: string, meta: Omit<CanonicalRun, 'text' | 'start' | 'end'>) => {
+    if (runText.length === 0) {
+      return;
+    }
 
-  // Walk runs in document order, progressively searching for each run’s
-  // text in normalizedRaw so positions stay aligned with the chunk map.
-  let searchFrom = 0;
-  const result: StyledBlock[] = [];
+    // Collapse block/tag boundaries to one space, matching chunkText normalization.
+    if (canonicalText.length > 0 && canonicalText[canonicalText.length - 1] !== ' ') {
+      canonicalText += ' ';
+    }
 
-  for (const block of rawBlocks) {
-    const mappedRuns: InlineRun[] = [];
+    const start = canonicalText.length;
+    canonicalText += runText;
+    const end = canonicalText.length;
 
+    canonicalRuns.push({
+      ...meta,
+      text: runText,
+      start,
+      end,
+    });
+  };
+
+  rawBlocks.forEach((block, blockIndex) => {
     for (const run of block.runs) {
-      const runText = run.text.replace(/[\t\r\n]+/g, ' ').replace(/ {2,}/g, ' ');
-      if (runText.length === 0) continue;
+      const runText = run.text.replace(/[\t\r\n]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+      appendRunToCanonical(runText, {
+        blockIndex,
+        bold: run.bold,
+        italic: run.italic,
+      });
+    }
+  });
 
-      // Find this run’s text inside the normalised raw text.
-      // Use indexOf for exact match; fall back to current position if not found
-      // (e.g. entity-decoding differences).
-      const found = normalizedRaw.indexOf(runText, searchFrom);
-      const runStart = found >= 0 ? found : searchFrom;
-      const runEnd = runStart + runText.length;
+  if (canonicalText.length === 0) {
+    return [];
+  }
 
-      // Determine starting chunk index for this run
-      let currentChunk = -1;
-      for (let i = runStart; i < Math.min(runEnd, charToChunk.length); i++) {
-        if (charToChunk[i] >= 0) {
-          currentChunk = charToChunk[i];
-          break;
-        }
-      }
-      if (currentChunk < 0) currentChunk = Math.max(0, chunks.length - 1);
+  const charToChunk = buildCharToChunkMap(canonicalText, chunks);
+  const result: StyledBlock[] = rawBlocks.map((block) => ({ type: block.type, runs: [] }));
 
-      // Walk character by character, emitting a new sub-run at every chunk boundary
-      let segStart = 0;
-      for (let i = runStart; i < Math.min(runEnd, charToChunk.length); i++) {
-        const ci = charToChunk[i] >= 0 ? charToChunk[i] : currentChunk;
-        if (ci !== currentChunk) {
-          const localOffset = i - runStart;
-          const segText = runText.slice(segStart, localOffset);
-          if (segText.length > 0) {
-            mappedRuns.push({ text: segText, bold: run.bold, italic: run.italic, chunkIndex: currentChunk });
-          }
-          segStart = localOffset;
-          currentChunk = ci;
-        }
-      }
-
-      // Emit remaining text
-      const remaining = runText.slice(segStart);
-      if (remaining.length > 0) {
-        mappedRuns.push({ text: remaining, bold: run.bold, italic: run.italic, chunkIndex: currentChunk });
-      }
-
-      // Advance search position
-      if (found >= 0) {
-        searchFrom = found + runText.length;
+  for (const run of canonicalRuns) {
+    let currentChunk = -1;
+    for (let i = run.start; i < run.end; i += 1) {
+      if (charToChunk[i] >= 0) {
+        currentChunk = charToChunk[i];
+        break;
       }
     }
 
-    if (mappedRuns.length > 0) {
-      result.push({ type: block.type, runs: mappedRuns });
+    if (currentChunk < 0) {
+      // At chapter start, unmatched spans should map to the first chunk, not the last.
+      currentChunk = 0;
+    }
+
+    let segStart = 0;
+    for (let i = run.start; i < run.end; i += 1) {
+      const ci = charToChunk[i] >= 0 ? charToChunk[i] : currentChunk;
+      if (ci !== currentChunk) {
+        const localOffset = i - run.start;
+        const segText = run.text.slice(segStart, localOffset);
+        if (segText.length > 0) {
+          result[run.blockIndex].runs.push({
+            text: segText,
+            bold: run.bold,
+            italic: run.italic,
+            chunkIndex: currentChunk,
+          });
+        }
+        segStart = localOffset;
+        currentChunk = ci;
+      }
+    }
+
+    const trailing = run.text.slice(segStart);
+    if (trailing.length > 0) {
+      result[run.blockIndex].runs.push({
+        text: trailing,
+        bold: run.bold,
+        italic: run.italic,
+        chunkIndex: currentChunk,
+      });
     }
   }
 
-  return result;
+  return result.filter((block) => block.runs.length > 0);
 }

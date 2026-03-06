@@ -7,6 +7,7 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useSupabaseAuth } from '@/hooks/use-supabase-auth';
+import { useTTSPreload } from '@/hooks/use-tts-preload';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -17,6 +18,8 @@ export default function RootLayout() {
   const { loading, isAuthenticated } = useSupabaseAuth();
   const router = useRouter();
   const segments = useSegments();
+
+  useTTSPreload();
 
   const inAuthRoute = (segments[0] as string | undefined) === 'auth';
 

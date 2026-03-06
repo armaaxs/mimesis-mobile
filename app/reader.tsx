@@ -385,6 +385,11 @@ export default function Reader() {
   };
 
   const rawChapterText = useMemo(() => extractRawText(currentHtml), [currentHtml]);
+  const downloadFileBaseName = useMemo(() => {
+    const bookTitle = (persistedBook?.title || params.title || 'book').trim();
+    const chapterTitle = (menuChapters[currentChapterNo]?.title || `chapter_${currentChapterNo + 1}`).trim();
+    return `${bookTitle}_${chapterTitle}`;
+  }, [currentChapterNo, menuChapters, params.title, persistedBook?.title]);
 
   const {
     isPlaying,
@@ -397,6 +402,7 @@ export default function Reader() {
     togglePlayPause,
   } = useTTSQueuePlayer({
     text: rawChapterText,
+    downloadFileBaseName,
     chunkSize: 200,
     playbackPrefetchAheadChunks: 40,
     playbackKeepBehindChunks: 20,
@@ -716,6 +722,12 @@ export default function Reader() {
     return `${minutes}:${String(seconds).padStart(2, '0')}`;
   }, [sleepTimerRemainingMs]);
 
+  const handleDownloadPress = useCallback(() => {
+    void downloadCurrentTextWithPicker().catch((error) => {
+      console.warn('Reader download failed:', error);
+    });
+  }, [downloadCurrentTextWithPicker]);
+
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     scrollMetricsRef.current.yOffset = event.nativeEvent.contentOffset.y;
   }, []);
@@ -777,6 +789,13 @@ return (
                         <Text style={styles.coverChapterText} numberOfLines={1}>
                           {currentChapterTitle}
                         </Text>
+                        <TouchableOpacity
+                          onPress={handleDownloadPress}
+                          disabled={controlsDisabled}
+                          style={[styles.coverDownloadButton, controlsDisabled && styles.disabled]}
+                        >
+                          <Ionicons name={isDownloading ? 'sync' : 'download'} size={16} color="#fff" />
+                        </TouchableOpacity>
                       </View>
                     </TouchableOpacity>
                   </View>
@@ -902,14 +921,6 @@ return (
           {/* REWRITTEN BUTTON SECTION: One Line, No Dividers */}
           <View style={styles.controlsRow}>
             <View style={styles.leftControlsRow}>
-              <TouchableOpacity 
-                onPress={downloadCurrentTextWithPicker} 
-                disabled={controlsDisabled} 
-                style={[styles.iconButton, controlsDisabled && styles.disabled]}
-              >
-                <Ionicons name={isDownloading ? 'sync' : 'download'} size={24} color="#fff" />
-              </TouchableOpacity>
-
               <View style={styles.sleepTimerContainer}>
                 <TouchableOpacity
                   onPress={() => setIsSleepMenuOpen((previous) => !previous)}
@@ -1055,6 +1066,8 @@ const styles = StyleSheet.create({
     top: 12,
     left: 12,
     right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 12,
@@ -1063,9 +1076,21 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.15)',
   },
   coverChapterText: {
+    flex: 1,
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
+  },
+  coverDownloadButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    marginLeft: 10,
   },
 
   // --- NAVIGATION ---

@@ -13,13 +13,6 @@ import { reconcileFromSupabase } from '@/services/syncService';
 import { deleteBook, listBookCatalog, saveBook } from '@/utils/bookRepository';
 import { extractEpubImportPayload } from '@/utils/epubparser';
 
-const BOOKS: LibraryBook[] = [
-  { id: '1', title: 'Stoner', author: 'John Williams', cover: null , uri:''},
-  { id: '2', title: 'A Little Life', author: 'Hanya Yanagihara', cover: 'https://covers.openlibrary.org/b/id/12625292-L.jpg', uri:'' },
-  { id: '3', title: 'The Goldfinch', author: 'Donna Tartt', cover: 'https://covers.openlibrary.org/b/id/12068222-L.jpg', uri:'' },
-  { id: '4', title: 'Normal People', author: 'Sally Rooney', cover: 'https://covers.openlibrary.org/b/id/10531551-L.jpg' , uri:''},
-];
-
 const dedupeBooks = (items: LibraryBook[]): LibraryBook[] => {
   const seen = new Set<string>();
   const result: LibraryBook[] = [];
@@ -45,7 +38,7 @@ const dedupeBooks = (items: LibraryBook[]): LibraryBook[] => {
 
 export default function LibraryScreen() {
   const router = useRouter();
-  const [books, setBooks] = React.useState<LibraryBook[]>(BOOKS);
+  const [books, setBooks] = React.useState<LibraryBook[]>([]);
   const [deleteTargetBookId, setDeleteTargetBookId] = React.useState<string | null>(null);
   
   const renderHeader = () => (
@@ -76,7 +69,7 @@ export default function LibraryScreen() {
         const importedBooks = await listBookCatalog();
 
         if (isActive) {
-          setBooks(dedupeBooks([...importedBooks, ...BOOKS]));
+          setBooks(dedupeBooks(importedBooks));
         }
 
         if (importedBooks.length > 0) {
@@ -86,7 +79,7 @@ export default function LibraryScreen() {
             if (!isActive) {
               return;
             }
-            setBooks(dedupeBooks([...reconciledBooks, ...BOOKS]));
+            setBooks(dedupeBooks(reconciledBooks));
           })();
         }
       };
@@ -117,7 +110,7 @@ export default function LibraryScreen() {
 
       await saveBook(importedBook);
       const refreshedCatalog = await listBookCatalog();
-      setBooks(dedupeBooks([...refreshedCatalog, ...BOOKS]));
+      setBooks(dedupeBooks(refreshedCatalog));
     } catch (error) {
       console.error('Import pipeline failed:', error);
     }
@@ -167,11 +160,11 @@ export default function LibraryScreen() {
     try {
       await deleteBook(book.id);
       const refreshed = await listBookCatalog();
-      setBooks(dedupeBooks([...refreshed, ...BOOKS]));
+      setBooks(dedupeBooks(refreshed));
     } catch (error) {
       console.warn('Failed to delete book:', error);
       const restored = await listBookCatalog();
-      setBooks(dedupeBooks([...restored, ...BOOKS]));
+      setBooks(dedupeBooks(restored));
     }
   };
 

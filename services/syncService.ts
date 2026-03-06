@@ -1,8 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import type { BookDTO, BookReadingProgressDTO } from '@/models/Book';
+import { Book, type BookDTO, type BookReadingProgressDTO } from '@/models/Book';
 import { isSupabaseConfigured, supabase } from '@/services/supabaseAuth';
-import { getBookById, saveBookReadingProgress } from '@/utils/bookRepository';
+import { getBookById, saveBook, saveBookReadingProgress } from '@/utils/bookRepository';
 
 const SYNC_QUEUE_KEY = 'mimesis.sync.queue.v1';
 
@@ -57,6 +57,16 @@ type SyncOperation =
         wifiOnlyDownloads: boolean;
         fontScale: number;
       };
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      createdAt: number;
+      type: 'insert_user_search';
+      payload: {
+        query: string;
+        searchedAt: string;
+      };
     };
 
 let activeFlushPromise: Promise<void> | null = null;
@@ -86,6 +96,10 @@ const readQueue = async (): Promise<SyncOperation[]> => {
 
 const writeQueue = async (items: SyncOperation[]) => {
   await AsyncStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(items));
+};
+
+export const clearSyncQueueCache = async () => {
+  await AsyncStorage.removeItem(SYNC_QUEUE_KEY);
 };
 
 const upsertOperation = async (operation: SyncOperation) => {
@@ -197,6 +211,29 @@ export const enqueueUserBookDelete = async (bookId: string) => {
   void flushSyncQueue();
 };
 
+export const enqueueUserSearchSync = async (query: string) => {
+  const trimmedQuery = query.trim();
+  if (!trimmedQuery) {
+    return;
+  }
+
+  const operationId = makeOperationId();
+  const operation: SyncOperation = {
+    id: operationId,
+    // Search history should keep all events; use a unique dedupeKey per entry.
+    dedupeKey: `user_search:${operationId}`,
+    createdAt: Date.now(),
+    type: 'insert_user_search',
+    payload: {
+      query: trimmedQuery,
+      searchedAt: new Date().toISOString(),
+    },
+  };
+
+  await upsertOperation(operation);
+  void flushSyncQueue();
+};
+
 const applyOperation = async (operation: SyncOperation, userId: string) => {
   if (operation.type === 'upsert_book') {
     const { error } = await supabase.from('books').upsert(operation.payload, {
@@ -265,6 +302,20 @@ const applyOperation = async (operation: SyncOperation, userId: string) => {
 
     if (error) {
       throw new Error(`user_books delete failed (${error.code ?? 'unknown'}): ${error.message}`);
+    }
+
+    return;
+  }
+
+  if (operation.type === 'insert_user_search') {
+    const { error } = await supabase.from('user_searches').insert({
+      user_id: userId,
+      query: operation.payload.query,
+      searched_at: operation.payload.searchedAt,
+    });
+
+    if (error) {
+      throw new Error(`user_searches insert failed (${error.code ?? 'unknown'}): ${error.message}`);
     }
 
     return;
@@ -427,6 +478,73 @@ export const pullUserBooksProgressForLocalCatalog = async (bookIds: string[]) =>
         skipSyncEnqueue: true,
       }
     );
+  }
+};
+
+export const hydrateLocalLibraryFromUserBooks = async () => {
+  if (!isSupabaseConfigured) {
+    return;
+  }
+
+  const userId = await getSessionUserId();
+  if (!userId) {
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from('user_books')
+    .select('book_id,last_chapter_index,last_chunk_index,last_chapter_href,last_read_at,books(id,title,author,language,summary,cover_url,source)')
+    .eq('user_id', userId)
+    .eq('is_saved', true);
+
+  if (error || !data) {
+    if (error) {
+      console.warn('Failed to hydrate local library from user_books:', error);
+    }
+    return;
+  }
+
+  for (const row of data as any[]) {
+    const bookId = String(row.book_id);
+    const existing = await getBookById(bookId);
+    if (existing) {
+      continue;
+    }
+
+    const remoteBook = Array.isArray(row.books) ? row.books[0] : row.books;
+    const remoteLastReadAt = row.last_read_at ? Date.parse(row.last_read_at) : NaN;
+    const readingProgress = Number.isFinite(remoteLastReadAt)
+      ? {
+          lastChapterIndex: row.last_chapter_index ?? 0,
+          lastChunkIndex: row.last_chunk_index ?? 0,
+          lastChapterHref: row.last_chapter_href ?? null,
+          lastReadAt: remoteLastReadAt,
+        }
+      : null;
+
+    const hydratedBook = Book.fromDTO({
+      id: bookId,
+      title: remoteBook?.title || `Book ${bookId}`,
+      author: remoteBook?.author || 'Unknown Author',
+      cover: remoteBook?.cover_url || null,
+      // URI/chapter payload is not stored in user_books/books; hydrate library card first.
+      uri: `synced://book/${bookId}`,
+      basePath: '',
+      chapters: [],
+      metadata: {
+        summary: remoteBook?.summary || null,
+        downloadCount: null,
+        language: remoteBook?.language || null,
+        subjects: [],
+        sourceId: null,
+      },
+      readingProgress,
+      createdAt: Number.isFinite(remoteLastReadAt) ? remoteLastReadAt : Date.now(),
+    });
+
+    await saveBook(hydratedBook, {
+      skipSyncEnqueue: true,
+    });
   }
 };
 

@@ -3,7 +3,8 @@ import { AppState } from 'react-native';
 import type { Session, User } from '@supabase/supabase-js';
 
 import { getCurrentSession, signInWithOAuthProvider, supabase } from '@/services/supabaseAuth';
-import { flushSyncQueue, reconcileFromSupabase } from '@/services/syncService';
+import { clearUserSessionCache } from '@/services/sessionCache';
+import { flushSyncQueue, hydrateLocalLibraryFromUserBooks, reconcileFromSupabase } from '@/services/syncService';
 import { listBookCatalog } from '@/utils/bookRepository';
 
 export const useSupabaseAuth = () => {
@@ -28,6 +29,7 @@ export const useSupabaseAuth = () => {
       }
 
       await flushSyncQueue();
+      await hydrateLocalLibraryFromUserBooks();
 
       const localBooks = await listBookCatalog();
       if (localBooks.length > 0) {
@@ -82,6 +84,11 @@ export const useSupabaseAuth = () => {
 
   const signOut = useCallback(async () => {
     const { error } = await supabase.auth.signOut();
+
+    if (!error) {
+      await clearUserSessionCache();
+    }
+
     return { error };
   }, []);
 

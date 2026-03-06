@@ -18,11 +18,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { getCachedTopic, setCachedTopic, clearCachedTopic, clearAllCache } from '@/utils/exploreCache';
 // --- CONFIGURATION ---
 const CATEGORIES = [
-  { id: '1', title: 'Popular Fiction', topic: 'fiction' },
-  { id: '2', title: 'Young Adult', topic: 'juvenile' },
-  { id: '3', title: 'Classic Literature', topic: 'classic' },
-  { id: '4', title: 'Mystery & Crime', topic: 'mystery' },
-  { id: '5', title: 'Science Fiction', topic: 'science-fiction' },
+  { id: '1', title: 'Non Fiction', topic: 'teen' },
+  { id: '2', title: 'Classic Literature', topic: 'classic' },
+  { id: '3', title: 'Mystery & Crime', topic: 'mystery' },
+  { id: '4', title: 'Science Fiction', topic: 'science-fiction' },
+    { id: '5', title: 'Young Adults', topic: 'ya' },
+    { id: '6', title: 'Children', topic: 'children' },
 ];
 
 // --- SKELETON COMPONENT ---
@@ -154,7 +155,7 @@ const BookSection = ({ title, topic, refreshToken }: { title: string; topic: str
     <View style={styles.sectionContainer}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>{title}</Text>
-          <TouchableOpacity onPress={async () => {
+          {/* <TouchableOpacity onPress={async () => {
           await clearCachedTopic(topic);
           // reset state and fetch fresh
           booksRef.current = [];
@@ -162,7 +163,7 @@ const BookSection = ({ title, topic, refreshToken }: { title: string; topic: str
                     setNextUrl(`https://gutendex.com/books?&page=${Math.floor(Math.random() * 10) + 1}&topic=$${topic}`);
           setInitialLoading(true);
           await fetchBooks(true);
-        }}><Text style={styles.seeAll}>See All</Text></TouchableOpacity>
+        }}><Text style={styles.seeAll}>See All</Text></TouchableOpacity> */}
       </View>
 
       <FlatList
@@ -232,7 +233,7 @@ export default function Explore() {
       <View style={styles.headerContainer}>
         <Text style={styles.headerSub}>Discover</Text>
         <View style={styles.headerTitleRow}>
-          <Text style={styles.headerTitle}>My Library</Text>
+          <Text style={styles.headerTitle}>Find new titles</Text>
           <TouchableOpacity
             onPress={() => router.push('/search')}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -275,6 +276,7 @@ const styles = StyleSheet.create({
   mainWrapper: {
     flex: 1,
     backgroundColor: '#000000', // True AMOLED black
+    paddingBottom: 30,
   },
   headerContainer: {
     paddingHorizontal: 20,

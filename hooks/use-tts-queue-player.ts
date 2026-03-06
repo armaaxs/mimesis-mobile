@@ -3,9 +3,9 @@ import { Directory, File, Paths } from 'expo-file-system';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AudioContext } from 'react-native-audio-api';
 import {
-  KOKORO_MEDIUM,
+  KOKORO_SMALL,
   // KOKORO_VOICE_AM_MICHAEL,
-  KOKORO_VOICE_AF_HEART,
+  KOKORO_VOICE_AM_MICHAEL,
   useTextToSpeech,
 } from 'react-native-executorch';
 import { chunkText } from '../utils/chunkText';
@@ -35,6 +35,7 @@ type RuntimeState = {
 
 export type UseTTSQueuePlayerOptions = {
   text: string;
+  downloadFileBaseName?: string;
   chunkSize?: number;
   chunkPauseMs?: number;
   playbackPrefetchAheadChunks?: number;
@@ -75,25 +76,30 @@ export type ChapterAudioDownloadResult = {
   chunkCount: number;
   totalSamples: number;
   sampleRate: number;
-  audio: Float32Array;
+  audio?: Float32Array;
 };
 
 export type ChapterAudioPickedSaveResult = ChapterAudioDownloadResult & {
   cacheUri: string;
   savedWithPicker: boolean;
 };
-
 export function useTTSQueuePlayer({
   text,
+  downloadFileBaseName,
   chunkSize = 200,
   chunkPauseMs = 140,
   playbackPrefetchAheadChunks = 40,
   playbackKeepBehindChunks = 20,
   queueTargetMemoryMB = 96,
 }: UseTTSQueuePlayerOptions): UseTTSQueuePlayerResult {
+  const DOWNLOAD_CHUNK_SIZE_MULTIPLIER = 4;
+  const DOWNLOAD_MAX_CONCURRENCY = 2;
+  const DOWNLOAD_CACHE_MAX_BYTES = 16 * 1024 * 1024;
+  const DOWNLOAD_PARALLEL_BATCH_CHUNKS = 12;
+
   const tts = useTextToSpeech({
-    model: KOKORO_MEDIUM,
-    voice: KOKORO_VOICE_AF_HEART,
+    model: KOKORO_SMALL,
+    voice: KOKORO_VOICE_AM_MICHAEL,
   });
 
   const ttsRef = useRef(tts);
@@ -135,6 +141,10 @@ export function useTTSQueuePlayer({
     playbackPromise: null,
     playbackPromiseSession: null,
   });
+  const downloadChunkAudioCacheRef = useRef<Map<string, Float32Array>>(new Map());
+  const downloadChunkAudioCacheBytesRef = useRef(0);
+  const downloadRequestIdRef = useRef(0);
+  const downloadParallelEnabledRef = useRef(true);
 
   useEffect(() => {
     ttsRef.current = tts;
@@ -157,6 +167,55 @@ export function useTTSQueuePlayer({
       .map((chunkValue) => chunkValue.trim())
       .filter((chunkValue) => chunkValue.length > 0);
   }, [chunkSize]);
+
+  const normalizeDownloadChunks = useCallback((inputText: string) => {
+    // Moderate chunking reduces invocation overhead while avoiding huge allocations.
+    const downloadChunkSize = Math.max(320, chunkSize * DOWNLOAD_CHUNK_SIZE_MULTIPLIER);
+    return chunkText(inputText, downloadChunkSize)
+      .map((chunkValue) => chunkValue.trim())
+      .filter((chunkValue) => chunkValue.length > 0);
+  }, [chunkSize]);
+
+  const clearDownloadCache = useCallback(() => {
+    downloadChunkAudioCacheRef.current.clear();
+    downloadChunkAudioCacheBytesRef.current = 0;
+  }, []);
+
+  const setCachedDownloadChunk = useCallback((key: string, value: Float32Array) => {
+    const existing = downloadChunkAudioCacheRef.current.get(key);
+    if (existing) {
+      downloadChunkAudioCacheBytesRef.current -= existing.length * Float32Array.BYTES_PER_ELEMENT;
+      downloadChunkAudioCacheRef.current.delete(key);
+    }
+
+    downloadChunkAudioCacheRef.current.set(key, value);
+    downloadChunkAudioCacheBytesRef.current += value.length * Float32Array.BYTES_PER_ELEMENT;
+
+    while (
+      downloadChunkAudioCacheBytesRef.current > DOWNLOAD_CACHE_MAX_BYTES
+      && downloadChunkAudioCacheRef.current.size > 0
+    ) {
+      const oldestKey = downloadChunkAudioCacheRef.current.keys().next().value as string | undefined;
+      if (!oldestKey) {
+        break;
+      }
+
+      const oldestValue = downloadChunkAudioCacheRef.current.get(oldestKey);
+      if (oldestValue) {
+        downloadChunkAudioCacheBytesRef.current -= oldestValue.length * Float32Array.BYTES_PER_ELEMENT;
+      }
+      downloadChunkAudioCacheRef.current.delete(oldestKey);
+    }
+  }, []);
+
+  const toSafeFileName = useCallback((value: string) => {
+    return value
+      .normalize('NFKD')
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .replace(/_{2,}/g, '_')
+      .slice(0, 96);
+  }, []);
 
   const setPreparedChunks = useCallback((chunks: string[]) => {
     runtimeRef.current.chunkTexts = chunks;
@@ -193,13 +252,30 @@ export function useTTSQueuePlayer({
     return mergedAudio;
   }, []);
 
-  const encodeWav16Bit = useCallback((audioData: Float32Array, sampleRate: number) => {
+  const encodeChunksToPcm16 = useCallback((audioChunks: Float32Array[]) => {
+    const totalSamples = audioChunks.reduce((sum, chunkAudio) => sum + chunkAudio.length, 0);
+    const pcm16 = new Int16Array(totalSamples);
+    let sampleOffset = 0;
+
+    for (const audioData of audioChunks) {
+      for (let sampleIndex = 0; sampleIndex < audioData.length; sampleIndex += 1) {
+        const sample = Math.max(-1, Math.min(1, audioData[sampleIndex]));
+        pcm16[sampleOffset] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+        sampleOffset += 1;
+      }
+    }
+
+    return pcm16;
+  }, []);
+
+  const buildWav16BitFromPcmBatches = useCallback((pcmBatches: Int16Array[], sampleRate: number) => {
     const channelCount = 1;
     const bitsPerSample = 16;
     const bytesPerSample = bitsPerSample / 8;
     const byteRate = sampleRate * channelCount * bytesPerSample;
     const blockAlign = channelCount * bytesPerSample;
-    const dataSize = audioData.length * bytesPerSample;
+    const totalSamples = pcmBatches.reduce((sum, batch) => sum + batch.length, 0);
+    const dataSize = totalSamples * bytesPerSample;
     const buffer = new ArrayBuffer(44 + dataSize);
     const view = new DataView(buffer);
 
@@ -224,11 +300,12 @@ export function useTTSQueuePlayer({
     view.setUint32(40, dataSize, true);
 
     let dataOffset = 44;
-    for (let sampleIndex = 0; sampleIndex < audioData.length; sampleIndex += 1) {
-      const sample = Math.max(-1, Math.min(1, audioData[sampleIndex]));
-      const int16Sample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-      view.setInt16(dataOffset, int16Sample, true);
-      dataOffset += 2;
+    for (const pcmBatch of pcmBatches) {
+      for (let sampleIndex = 0; sampleIndex < pcmBatch.length; sampleIndex += 1) {
+        const int16Sample = pcmBatch[sampleIndex];
+        view.setInt16(dataOffset, int16Sample, true);
+        dataOffset += 2;
+      }
     }
 
     return new Uint8Array(buffer);
@@ -269,9 +346,20 @@ export function useTTSQueuePlayer({
 
     return (
       errorCode === 2
-      || /currently generating|forward function did not succeed|model input is correct/i.test(errorMessage)
+      || errorCode === 115
+      || /currently generating|forward function did not succeed|failed to execute method forward|error:\s*2|model input is correct/i.test(errorMessage)
     );
   }, []);
+
+  const isDownloadCancelled = useCallback((requestId: number) => {
+    return requestId !== downloadRequestIdRef.current;
+  }, []);
+
+  const assertDownloadActive = useCallback((requestId: number) => {
+    if (isDownloadCancelled(requestId)) {
+      throw new Error('download-cancelled');
+    }
+  }, [isDownloadCancelled]);
 
   const stopCurrentAudio = useCallback(() => {
     const runtime = runtimeRef.current;
@@ -625,42 +713,258 @@ export function useTTSQueuePlayer({
     updateMemoryStats();
     stopCurrentAudio();
     await stopGenerationAndWait();
-  }, [setPlayerState, stopCurrentAudio, stopGenerationAndWait, updateMemoryStats]);
+    clearDownloadCache();
+  }, [clearDownloadCache, setPlayerState, stopCurrentAudio, stopGenerationAndWait, updateMemoryStats]);
 
-  const buildCurrentTextDownloadToCache = useCallback(async () => {
-    await reset();
+  const writeWavToFile = useCallback((file: File, wavBytes: Uint8Array) => {
+    if (file.exists) {
+      file.delete();
+    }
 
-    const normalizedChunks = normalizeChunks(text);
+    file.create({ intermediates: true, overwrite: true });
+    file.write(Buffer.from(wavBytes).toString('base64'), { encoding: 'base64' });
+  }, []);
 
+  const synthesizeChunkForDownload = useCallback(async (chunkValue: string, requestId: number) => {
+    const normalizedChunk = chunkValue.trim();
+    if (normalizedChunk.length === 0) {
+      return new Float32Array(0);
+    }
+
+    await waitForModelReady();
+    assertDownloadActive(requestId);
+
+    const maxRetries = 6;
+    const audioParts: Float32Array[] = [];
+
+    for (let attempt = 0; attempt < maxRetries; attempt += 1) {
+      assertDownloadActive(requestId);
+
+      try {
+        await ttsRef.current.stream({
+          text: normalizedChunk,
+          onNext: async (audioChunk) => {
+            audioParts.push(new Float32Array(audioChunk));
+          },
+        });
+
+        return concatAudio(audioParts);
+      } catch (error) {
+        const shouldRetry = isRetryableSynthesisError(error);
+        if (!shouldRetry || attempt === maxRetries - 1) {
+          throw error;
+        }
+
+        audioParts.length = 0;
+        await waitForModelIdle(500);
+        await sleep(60 * (attempt + 1));
+      }
+    }
+
+    return concatAudio(audioParts);
+  }, [assertDownloadActive, concatAudio, isRetryableSynthesisError, sleep, waitForModelIdle, waitForModelReady]);
+
+  const synthesizeDownloadChunksConcurrent = useCallback(async (
+    normalizedChunks: string[],
+    requestId: number,
+  ) => {
+    const audioParts = new Array<Float32Array>(normalizedChunks.length);
+    const workerCount = Math.max(1, Math.min(DOWNLOAD_MAX_CONCURRENCY, normalizedChunks.length));
+    let cursor = 0;
+
+    const worker = async () => {
+      while (true) {
+        assertDownloadActive(requestId);
+
+        const currentIndex = cursor;
+        cursor += 1;
+
+        if (currentIndex >= normalizedChunks.length) {
+          return;
+        }
+
+        const chunkValue = normalizedChunks[currentIndex];
+        const cachedAudio = downloadChunkAudioCacheRef.current.get(chunkValue);
+        if (cachedAudio) {
+          audioParts[currentIndex] = cachedAudio;
+          continue;
+        }
+
+        const chunkAudio = await synthesizeChunkForDownload(chunkValue, requestId);
+        setCachedDownloadChunk(chunkValue, chunkAudio);
+        audioParts[currentIndex] = chunkAudio;
+      }
+    };
+
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    return audioParts;
+  }, [assertDownloadActive, setCachedDownloadChunk, synthesizeChunkForDownload]);
+
+  const synthesizeDownloadChunksSequential = useCallback(async (
+    normalizedChunks: string[],
+    requestId: number,
+  ) => {
     const chunkAudioParts: Float32Array[] = [];
 
     for (let chunkIndex = 0; chunkIndex < normalizedChunks.length; chunkIndex += 1) {
-      const chunkAudio = await synthesizeChunk(normalizedChunks[chunkIndex]);
+      assertDownloadActive(requestId);
+      const chunkValue = normalizedChunks[chunkIndex];
+      const cachedAudio = downloadChunkAudioCacheRef.current.get(chunkValue);
+      if (cachedAudio) {
+        chunkAudioParts.push(cachedAudio);
+        continue;
+      }
+
+      const chunkAudio = await synthesizeChunkForDownload(chunkValue, requestId);
+      setCachedDownloadChunk(chunkValue, chunkAudio);
       chunkAudioParts.push(chunkAudio);
     }
 
-    const stitchedAudio = concatAudio(chunkAudioParts);
-    const sampleRate = 24000;
-    const wavBytes = encodeWav16Bit(stitchedAudio, sampleRate);
-    const fileName = `tts-chapter-${Date.now()}.wav`;
-    const outputFile = new File(Paths.cache, fileName);
+    return chunkAudioParts;
+  }, [assertDownloadActive, setCachedDownloadChunk, synthesizeChunkForDownload]);
 
-    if (outputFile.exists) {
-      outputFile.delete();
+  const synthesizeDownloadChunksBatched = useCallback(async (
+    normalizedChunks: string[],
+    requestId: number,
+    options?: {
+      includeAudioInResult?: boolean;
+    },
+  ) => {
+    const includeAudioInResult = Boolean(options?.includeAudioInResult);
+    const sampleRate = 24000;
+    const pcmBatches: Int16Array[] = [];
+    const stitchedAudioBatches: Float32Array[] = [];
+    let totalSamples = 0;
+    let synthElapsedMs = 0;
+    let encodeElapsedMs = 0;
+
+    for (let startIndex = 0; startIndex < normalizedChunks.length; startIndex += DOWNLOAD_PARALLEL_BATCH_CHUNKS) {
+      assertDownloadActive(requestId);
+      const batchChunks = normalizedChunks.slice(startIndex, startIndex + DOWNLOAD_PARALLEL_BATCH_CHUNKS);
+      let batchAudioParts: Float32Array[];
+      const batchSynthStartedAt = Date.now();
+
+      try {
+        if (downloadParallelEnabledRef.current) {
+          batchAudioParts = await synthesizeDownloadChunksConcurrent(batchChunks, requestId);
+        } else {
+          batchAudioParts = await synthesizeDownloadChunksSequential(batchChunks, requestId);
+        }
+      } catch (error) {
+        if (downloadParallelEnabledRef.current && isRetryableSynthesisError(error)) {
+          downloadParallelEnabledRef.current = false;
+
+          try {
+            ttsRef.current.streamStop();
+          } catch {
+            // no-op
+          }
+
+          await waitForModelIdle(1200);
+          assertDownloadActive(requestId);
+          batchAudioParts = await synthesizeDownloadChunksSequential(batchChunks, requestId);
+        } else {
+          throw error;
+        }
+      }
+
+      const batchTotalSamples = batchAudioParts.reduce((sum, chunkAudio) => sum + chunkAudio.length, 0);
+      totalSamples += batchTotalSamples;
+      synthElapsedMs += Date.now() - batchSynthStartedAt;
+
+      if (includeAudioInResult) {
+        stitchedAudioBatches.push(...batchAudioParts);
+      }
+
+      const batchEncodeStartedAt = Date.now();
+      pcmBatches.push(encodeChunksToPcm16(batchAudioParts));
+      encodeElapsedMs += Date.now() - batchEncodeStartedAt;
+
+      // Keep cache bounded by section rather than the full chapter to avoid large memory retention.
+      if (normalizedChunks.length > DOWNLOAD_PARALLEL_BATCH_CHUNKS) {
+        clearDownloadCache();
+      }
     }
 
-    outputFile.create({ intermediates: true, overwrite: true });
-    outputFile.write(Buffer.from(wavBytes).toString('base64'), { encoding: 'base64' });
+    const wavBuildStartedAt = Date.now();
+    const wavBytes = buildWav16BitFromPcmBatches(pcmBatches, sampleRate);
+    encodeElapsedMs += Date.now() - wavBuildStartedAt;
+
+    return {
+      wavBytes,
+      totalSamples,
+      sampleRate,
+      audio: includeAudioInResult ? concatAudio(stitchedAudioBatches) : undefined,
+      synthElapsedMs,
+      encodeElapsedMs,
+    };
+  }, [assertDownloadActive, buildWav16BitFromPcmBatches, clearDownloadCache, concatAudio, encodeChunksToPcm16, isRetryableSynthesisError, synthesizeDownloadChunksConcurrent, synthesizeDownloadChunksSequential, waitForModelIdle]);
+
+  const buildCurrentTextDownload = useCallback(async (
+    requestId: number,
+    options?: {
+      includeAudioInResult?: boolean;
+    },
+  ) => {
+    const startedAt = Date.now();
+    const normalizedChunks = normalizeDownloadChunks(text);
+    assertDownloadActive(requestId);
+    const includeAudioInResult = Boolean(options?.includeAudioInResult);
+
+    const synthesizedDownload = await synthesizeDownloadChunksBatched(normalizedChunks, requestId, {
+      includeAudioInResult,
+    });
+    const synthElapsedMs = synthesizedDownload.synthElapsedMs;
+    assertDownloadActive(requestId);
+
+    const encodeElapsedMs = synthesizedDownload.encodeElapsedMs;
+    clearDownloadCache();
+
+    const normalizedBaseName = downloadFileBaseName
+      ? toSafeFileName(downloadFileBaseName)
+      : '';
+    const fileName = normalizedBaseName
+      ? `${normalizedBaseName}.wav`
+      : `tts-chapter-${Date.now()}.wav`;
+
+    console.log('[TTS download] stage timings:', {
+      chunks: normalizedChunks.length,
+      synthMs: synthElapsedMs,
+      encodeMs: encodeElapsedMs,
+      totalMs: Date.now() - startedAt,
+      parallelUsed: downloadParallelEnabledRef.current,
+      batchSize: DOWNLOAD_PARALLEL_BATCH_CHUNKS,
+    });
+
+    return {
+      wavBytes: synthesizedDownload.wavBytes,
+      fileName,
+      chunkCount: normalizedChunks.length,
+      totalSamples: synthesizedDownload.totalSamples,
+      sampleRate: synthesizedDownload.sampleRate,
+      audio: synthesizedDownload.audio,
+    };
+  }, [DOWNLOAD_PARALLEL_BATCH_CHUNKS, assertDownloadActive, clearDownloadCache, downloadFileBaseName, normalizeDownloadChunks, synthesizeDownloadChunksBatched, text, toSafeFileName]);
+
+  const buildCurrentTextDownloadToCache = useCallback(async () => {
+    const requestId = ++downloadRequestIdRef.current;
+    const compiledDownload = await buildCurrentTextDownload(requestId, {
+      includeAudioInResult: true,
+    });
+    const outputFile = new File(Paths.cache, compiledDownload.fileName);
+    writeWavToFile(outputFile, compiledDownload.wavBytes);
+
+    assertDownloadActive(requestId);
 
     return {
       uri: outputFile.uri,
-      fileName,
-      chunkCount: normalizedChunks.length,
-      totalSamples: stitchedAudio.length,
-      sampleRate,
-      audio: stitchedAudio,
+      fileName: compiledDownload.fileName,
+      chunkCount: compiledDownload.chunkCount,
+      totalSamples: compiledDownload.totalSamples,
+      sampleRate: compiledDownload.sampleRate,
+      audio: compiledDownload.audio,
     };
-  }, [concatAudio, encodeWav16Bit, normalizeChunks, reset, synthesizeChunk, text]);
+  }, [assertDownloadActive, buildCurrentTextDownload, writeWavToFile]);
 
   const downloadCurrentTextToMemory = useCallback(async () => {
     setIsDownloading(true);
@@ -673,64 +977,95 @@ export function useTTSQueuePlayer({
   }, [buildCurrentTextDownloadToCache]);
 
   const downloadCurrentTextWithPicker = useCallback(async () => {
+    const requestId = ++downloadRequestIdRef.current;
+    const defaultDownloadsDirectory = new Directory(Paths.document, 'Downloads');
+
+    if (!defaultDownloadsDirectory.exists) {
+      defaultDownloadsDirectory.create({ intermediates: true, idempotent: true });
+    }
+
+    let selectedDirectoryUri: string | null = null;
+    let savedWithPicker = false;
+
+    // Pick destination before enabling the loading modal; the modal can block picker presentation on some devices.
+    try {
+      const selectedDirectory = await Directory.pickDirectoryAsync(defaultDownloadsDirectory.uri);
+      selectedDirectoryUri = selectedDirectory.uri;
+      savedWithPicker = true;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message.toLowerCase() : '';
+      const pickerCancelled = errorMessage.includes('cancel') || errorMessage.includes('canceled');
+
+      if (!pickerCancelled) {
+        console.warn('TTS picker open failed, fallback to app Downloads folder:', error);
+      }
+    }
+
+    assertDownloadActive(requestId);
     setIsDownloading(true);
 
     try {
-      const cacheResult = await buildCurrentTextDownloadToCache();
-      const sourceFile = new File(cacheResult.uri);
-      const defaultDownloadsDirectory = new Directory(Paths.document, 'Downloads');
+      const compiledDownload = await buildCurrentTextDownload(requestId, {
+        includeAudioInResult: false,
+      });
+      assertDownloadActive(requestId);
 
-      if (!defaultDownloadsDirectory.exists) {
-        defaultDownloadsDirectory.create({ intermediates: true, idempotent: true });
+      const cacheFile = new File(Paths.cache, compiledDownload.fileName);
+      writeWavToFile(cacheFile, compiledDownload.wavBytes);
+
+      const sourceFile = new File(cacheFile.uri);
+      const targetDirectoryUri = selectedDirectoryUri || defaultDownloadsDirectory.uri;
+      let destinationFile = new File(targetDirectoryUri, compiledDownload.fileName);
+
+      if (destinationFile.exists) {
+        destinationFile.delete();
       }
 
-      const saveToDefaultDownloads = () => {
-        const destinationFile = new File(defaultDownloadsDirectory, cacheResult.fileName);
-
-        if (destinationFile.exists) {
-          destinationFile.delete();
-        }
-
-        sourceFile.copy(destinationFile);
-
-        return {
-          ...cacheResult,
-          uri: destinationFile.uri,
-          cacheUri: cacheResult.uri,
-          savedWithPicker: false,
-        };
-      };
+      const writeStartedAt = Date.now();
 
       try {
-        const selectedDirectory = await Directory.pickDirectoryAsync(defaultDownloadsDirectory.uri);
-        const destinationFile = new File(selectedDirectory.uri, cacheResult.fileName);
+        sourceFile.copy(destinationFile);
+      } catch (copyError) {
+        // SAF-backed picked directories are more robust with copy; if that still fails, fallback to app Downloads.
+        console.warn('TTS copy to target failed, fallback to app Downloads:', copyError);
+        savedWithPicker = false;
+        destinationFile = new File(defaultDownloadsDirectory, compiledDownload.fileName);
 
         if (destinationFile.exists) {
           destinationFile.delete();
         }
 
         sourceFile.copy(destinationFile);
-
-        return {
-          ...cacheResult,
-          uri: destinationFile.uri,
-          cacheUri: cacheResult.uri,
-          savedWithPicker: true,
-        };
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message.toLowerCase() : '';
-        const pickerCancelled = errorMessage.includes('cancel') || errorMessage.includes('canceled');
-
-        if (!pickerCancelled) {
-          console.warn('TTS picker save fallback to cache file:', error);
-        }
-
-        return saveToDefaultDownloads();
       }
+
+      console.log('[TTS download] write timing:', {
+        writeMs: Date.now() - writeStartedAt,
+        target: savedWithPicker ? 'picker' : 'default-downloads',
+      });
+
+      return {
+        uri: destinationFile.uri,
+        cacheUri: cacheFile.uri,
+        fileName: compiledDownload.fileName,
+        chunkCount: compiledDownload.chunkCount,
+        totalSamples: compiledDownload.totalSamples,
+        sampleRate: compiledDownload.sampleRate,
+        audio: undefined,
+        savedWithPicker,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'download-cancelled') {
+        throw new Error('Download cancelled by a newer request.');
+      }
+      throw error;
     } finally {
-      setIsDownloading(false);
+      if (requestId === downloadRequestIdRef.current) {
+        setIsDownloading(false);
+        clearDownloadCache();
+      }
     }
-  }, [buildCurrentTextDownloadToCache]);
+  }, [assertDownloadActive, buildCurrentTextDownload, clearDownloadCache, writeWavToFile]);
 
   const start = useCallback(async () => {
     const runtime = runtimeRef.current;

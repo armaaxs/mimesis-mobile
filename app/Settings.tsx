@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router'; // <-- 1. Imported useRouter
 import { Ionicons } from '@expo/vector-icons';
 import { useSupabaseAuth } from '@/hooks/use-supabase-auth';
 import { isSupabaseConfigured } from '@/services/supabaseAuth';
@@ -22,6 +22,8 @@ import {
 } from '@/utils/userSettingsRepository';
 
 export default function Settings() {
+  const router = useRouter(); // <-- 2. Initialized router
+  
   // State for toggleable settings
   const [isAmoledDark, setIsAmoledDark] = useState(true);
   const [wifiOnly, setWifiOnly] = useState(false);
@@ -139,11 +141,15 @@ export default function Settings() {
     <SafeAreaView style={styles.container}>
       <Stack.Screen
         options={{
-          title: 'Profile',
-          headerBackButtonDisplayMode: 'minimal',
+          headerShown: false, // <-- 3. Hid the default header so we only see your custom one
         }}
       />
+      
+      {/* 4. Added the Back Button to your Header Row */}
       <View style={styles.headerRow}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <Ionicons name="chevron-back" size={28} color="#00bca3" />
+        </TouchableOpacity>
         <Text style={styles.title}>Settings</Text>
       </View>
 
@@ -205,14 +211,6 @@ export default function Settings() {
                 </TouchableOpacity>
               </>
             )}
-
-            {/* <TouchableOpacity style={styles.itemRow}>
-              <View style={styles.itemLeft}>
-                <Ionicons name="cloud-upload" size={20} color="#00bca3" style={styles.itemIcon} />
-                <Text style={styles.itemText}>Sync Library Progress</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color="#666666" />
-            </TouchableOpacity> */}
           </View>
         </View>
 
@@ -304,9 +302,15 @@ const styles = StyleSheet.create({
   headerRow: {
     marginTop: 20,
     marginBottom: 20,
-    paddingHorizontal: 24,
+    paddingHorizontal: 20, // Slightly reduced to make room for the button
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  // 5. Added style for the back button
+  backButton: {
+    marginRight: 12,
+    marginLeft: -4, // Optically aligns the chevron with the edge of the screen below
+    padding: 4,     // Makes the invisible touch target larger for thumbs
   },
   title: {
     fontSize: 34,
