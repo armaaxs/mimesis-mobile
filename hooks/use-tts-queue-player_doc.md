@@ -3,7 +3,7 @@
 ## 1) Purpose
 `useTTSQueuePlayer` is a chunked TTS playback hook for long text (chapter-like content). It provides:
 
-- model-gated synthesis (`waitForModelReady`),
+- model-gated synthesis with recovery (`ensureModelReady`),
 - queue-based playback with rolling memory window,
 - play/pause/resume/toggle/reset controls,
 - chunk seeking (`seekToChunk`) for seeker UI,
@@ -19,8 +19,9 @@ useTTSQueuePlayer({
   text: string,
   chunkSize?: number,                    // default: 200
   chunkPauseMs?: number,                 // default: 140
-  playbackPrefetchAheadChunks?: number,  // default: 3
-  playbackKeepBehindChunks?: number,     // default: 1
+  playbackPrefetchAheadChunks?: number,  // default: 6
+  playbackKeepBehindChunks?: number,     // default: 2
+  queueTargetMemoryMB?: number,          // default: 96
 })
 ```
 
@@ -104,7 +105,7 @@ Single normalization path used by playback + seek + download:
 
 ### 4.2 `synthesizeChunk(chunkValue)`
 - Trims input chunk and returns empty audio for empty text.
-- Waits for model readiness before synthesis.
+- Sanitizes control chars and ensures model readiness before synthesis.
 - Streams PCM chunks and concatenates to one `Float32Array`.
 - Retries up to 5 times for retryable native/model errors:
   - `currently generating`,
@@ -114,19 +115,26 @@ Single normalization path used by playback + seek + download:
 - Retry procedure:
   1. `streamStop()`,
   2. wait for idle,
-  3. wait for ready,
+  3. run readiness recovery,
   4. backoff and retry.
 
-### 4.3 `generateQueue(sessionId)`
+### 4.3 `playAudioBuffer(audioData)`
+- Validates sample values before native playback.
+- Wraps buffer creation/start in try/catch.
+- Always resolves playback promise to avoid deadlock on native errors.
+- Logs `TTS playAudioBuffer error` on failure.
+
+### 4.4 `generateQueue(sessionId)`
 - Generates from `nextChunkToGenerate` within prefetch window only.
 - Stores chunk audio in `audioQueue[index]`.
 - Prunes queue using keep-behind + prefetch-ahead limits.
 - Updates `memoryStats` on changes.
 
-### 4.4 `playQueue(sessionId)`
+### 4.5 `playQueue(sessionId)`
 - Waits for chunk audio availability.
 - Plays chunk PCM via `AudioContext`.
 - Advances `currentChunkIndex` on natural chunk end.
+- Attempts on-demand synth recovery if generation ended but current chunk audio is missing.
 - Stops when paused/session-changed/end reached.
 
 ---
@@ -142,7 +150,7 @@ Single normalization path used by playback + seek + download:
 ### `pause()`
 - Sets `isPlaying: false`, `isPaused: true`.
 - Stops current audio source immediately.
-- Stops generation and waits for model to become idle.
+- Stops generation and waits for model to become idle (`stopGenerationAndWait`).
 
 ### `resume()`
 - If no chunks, no-op.
@@ -160,7 +168,8 @@ Single normalization path used by playback + seek + download:
 - Clamps target index to valid range.
 - Stops current generation/audio.
 - Starts a new session from target chunk.
-- If currently playing, resumes playback from target; otherwise only preloads.
+- Resets queue and generation cursor to target chunk.
+- Auto-starts playback when prior state is paused or playing.
 
 ### `reset()`
 - Increments `sessionId` (invalidates stale async work).
@@ -199,6 +208,7 @@ Single normalization path used by playback + seek + download:
 - **Start lock** via `isStarting` to avoid overlapping starts.
 - **Model readiness gating** before synthesis/start.
 - **Safe teardown** for audio source + model stream.
+- **Defensive playback resolution** so chunk playback never hangs on native start errors.
 
 ---
 

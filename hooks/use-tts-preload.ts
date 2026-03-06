@@ -1,14 +1,15 @@
 import { useEffect, useRef } from 'react';
+import { useTextToSpeech } from 'react-native-executorch';
 import {
-  KOKORO_MEDIUM,
-  KOKORO_VOICE_AF_HEART,
-  useTextToSpeech,
-} from 'react-native-executorch';
+  DEFAULT_EXECUTORCH_TTS_MODEL,
+  DEFAULT_EXECUTORCH_TTS_VOICE,
+} from '../services/tts/config';
 
 export function useTTSPreload() {
   const tts = useTextToSpeech({
-    model: KOKORO_MEDIUM,
-    voice: KOKORO_VOICE_AF_HEART,
+    // Keep preload aligned with playback hook to avoid model/voice contention.
+    model: DEFAULT_EXECUTORCH_TTS_MODEL,
+    voice: DEFAULT_EXECUTORCH_TTS_VOICE,
   });
   
   const hasLoadedRef = useRef(false);

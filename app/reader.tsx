@@ -1,7 +1,6 @@
 import ChunkSeeker from '@/components/ChunkSeeker.component';
 import DownloadOverlay from '@/components/DownloadOverlay.component';
 import Screenheader from '@/components/Screenheader.component';
-import { useBackgroundMediaSession } from '@/hooks/use-background-media-session';
 import { useTTSQueuePlayer } from '@/hooks/use-tts-queue-player';
 import { Book, BookReadingProgressDTO } from '@/models/Book';
 import { pullUserBookProgressForBook } from '@/services/syncService';
@@ -404,9 +403,9 @@ export default function Reader() {
     text: rawChapterText,
     downloadFileBaseName,
     chunkSize: 200,
-    playbackPrefetchAheadChunks: 40,
-    playbackKeepBehindChunks: 20,
-    queueTargetMemoryMB: 96,
+    playbackPrefetchAheadChunks: 6,
+    playbackKeepBehindChunks: 2,
+    queueTargetMemoryMB: 32,
   });
 
   const controlsDisabled = !!isDownloading;
@@ -607,16 +606,8 @@ export default function Reader() {
     }
   }, [isPlaying, togglePlayPause]);
 
-  useBackgroundMediaSession({
-    title: persistedBook?.title || params.title || 'Reader',
-    artist: persistedBook?.author || params.author || 'Audiobook',
-    artwork: persistedBook?.cover || params.cover || undefined,
-    isPlaying,
-    position: currentChunkIndex,
-    duration: Math.max(totalChunks - 1, 1),
-    onPlay: handleRemotePlay,
-    onPause: handleRemotePause,
-  });
+  // Temporarily disabled to isolate physical-device TTS session conflicts.
+  // Re-enable after confirming stable chunk playback on device.
 
   // ── Lifecycle effects for scroll ──────────────────────────────────────
 

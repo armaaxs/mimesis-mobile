@@ -164,8 +164,11 @@ Streaming queue-based TTS engine + player.
 
 Model/runtime stack:
 - `react-native-executorch` (`useTextToSpeech`)
-- Kokoro model/voice constants (`KOKORO_MEDIUM`, `KOKORO_VOICE_AF_HEART`)
-- `react-native-audio-api` `AudioContext` at 24kHz
+- shared TTS config constants from `services/tts/config.ts`
+   - `DEFAULT_EXECUTORCH_TTS_MODEL`
+   - `DEFAULT_EXECUTORCH_TTS_VOICE`
+   - `DEFAULT_TTS_SAMPLE_RATE`
+- `react-native-audio-api` `AudioContext` using configured sample rate
 
 ### Internal Runtime State
 The hook tracks:
@@ -191,20 +194,27 @@ The hook tracks:
    - plays buffer via `AudioContext`
    - advances current chunk index on completion
 4. `pause()`:
-   - stops current source, keeps pause state
+   - stops current source
+   - keeps pause state
+   - stops generation (`stopGenerationAndWait`)
 5. `resume()`:
    - restarts queue generation + playback for current session
 6. `seekToChunk(index)`:
    - increments session id
    - stops model stream and current source
-   - re-anchors playback/index
-   - restarts generation/play from new position if playing
+   - resets queue and generation cursor to target index
+   - auto-starts playback when current state is paused or playing
 
 ### Queue Memory Management
 Configurable controls:
-- `playbackPrefetchAheadChunks` (default 40)
-- `playbackKeepBehindChunks` (default 20)
+- `playbackPrefetchAheadChunks` (default 6)
+- `playbackKeepBehindChunks` (default 2)
 - `queueTargetMemoryMB` (default 96)
+
+Reader-level override in `app/reader.tsx`:
+- `playbackPrefetchAheadChunks: 6`
+- `playbackKeepBehindChunks: 2`
+- `queueTargetMemoryMB: 32`
 
 Pruning rules:
 - keep chunks near current index
@@ -213,6 +223,11 @@ Pruning rules:
 
 ### Retry Behavior for Synthesis
 `synthesizeChunk` retries transient generation failures up to 5 attempts when error indicates in-flight generation conflicts or model forward failures.
+
+### Playback Error Hardening
+- `playAudioBuffer` validates sample values before playback.
+- Native buffer creation/start exceptions are caught and surfaced in logs.
+- Playback loop wraps buffer playback in try/catch and transitions to paused state on failure.
 
 ---
 

@@ -2,12 +2,12 @@ import { Buffer } from 'buffer';
 import { Directory, File, Paths } from 'expo-file-system';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AudioContext } from 'react-native-audio-api';
+import { useTextToSpeech } from 'react-native-executorch';
 import {
-  KOKORO_SMALL,
-  // KOKORO_VOICE_AM_MICHAEL,
-  KOKORO_VOICE_AM_MICHAEL,
-  useTextToSpeech,
-} from 'react-native-executorch';
+  DEFAULT_EXECUTORCH_TTS_MODEL,
+  DEFAULT_EXECUTORCH_TTS_VOICE,
+  DEFAULT_TTS_SAMPLE_RATE,
+} from '../services/tts/config';
 import { chunkText } from '../utils/chunkText';
 
 type PlaybackResult = 'ended' | 'stopped';
@@ -88,8 +88,8 @@ export function useTTSQueuePlayer({
   downloadFileBaseName,
   chunkSize = 200,
   chunkPauseMs = 140,
-  playbackPrefetchAheadChunks = 40,
-  playbackKeepBehindChunks = 20,
+  playbackPrefetchAheadChunks = 6,
+  playbackKeepBehindChunks = 2,
   queueTargetMemoryMB = 96,
 }: UseTTSQueuePlayerOptions): UseTTSQueuePlayerResult {
   const DOWNLOAD_CHUNK_SIZE_MULTIPLIER = 4;
@@ -98,12 +98,12 @@ export function useTTSQueuePlayer({
   const DOWNLOAD_PARALLEL_BATCH_CHUNKS = 12;
 
   const tts = useTextToSpeech({
-    model: KOKORO_SMALL,
-    voice: KOKORO_VOICE_AM_MICHAEL,
+    model: DEFAULT_EXECUTORCH_TTS_MODEL,
+    voice: DEFAULT_EXECUTORCH_TTS_VOICE,
   });
 
   const ttsRef = useRef(tts);
-  const audioContextRef = useRef(new AudioContext({ sampleRate: 24000}));
+  const audioContextRef = useRef(new AudioContext({ sampleRate: DEFAULT_TTS_SAMPLE_RATE }));
   const previousTextRef = useRef(text);
 
   const [isPlaying, setIsPlaying] = useState(false);
@@ -233,7 +233,7 @@ export function useTTSQueuePlayer({
       queuedChunks: queuedAudioParts.length,
       queuedSamples,
       queuedBytes,
-      queuedSeconds: queuedSamples / 24000,
+      queuedSeconds: queuedSamples / DEFAULT_TTS_SAMPLE_RATE,
       generatedSamplesTotal: runtime.totalGeneratedSamples,
       generatedBytesTotal: runtime.totalGeneratedSamples * Float32Array.BYTES_PER_ELEMENT,
     });
@@ -331,6 +331,28 @@ export function useTTSQueuePlayer({
     }
   }, [sleep]);
 
+  const ensureModelReady = useCallback(async (timeoutMs: number = 20000) => {
+    if (ttsRef.current.isReady) {
+      return;
+    }
+
+    try {
+      await waitForModelReady(timeoutMs);
+      return;
+    } catch {
+      // Attempt one soft recovery cycle before surfacing failure.
+    }
+
+    try {
+      ttsRef.current.streamStop();
+    } catch {
+      // no-op
+    }
+
+    await waitForModelIdle(1800);
+    await waitForModelReady(timeoutMs);
+  }, [waitForModelIdle, waitForModelReady]);
+
   const isRetryableSynthesisError = useCallback((error: unknown) => {
     const errorCode =
       typeof error === 'object' && error !== null && 'code' in error
@@ -347,7 +369,7 @@ export function useTTSQueuePlayer({
     return (
       errorCode === 2
       || errorCode === 115
-      || /currently generating|forward function did not succeed|failed to execute method forward|error:\s*2|model input is correct/i.test(errorMessage)
+      || /currently generating|forward function did not succeed|failed to execute method forward|error:\s*2|model input is correct|did not become ready in time|preload timeout/i.test(errorMessage)
     );
   }, []);
 
@@ -400,12 +422,14 @@ export function useTTSQueuePlayer({
   }, [waitForModelIdle]);
 
   const synthesizeChunk = useCallback(async (chunkValue: string) => {
-    const normalizedChunk = chunkValue.trim();
+    const normalizedChunk = chunkValue
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
+      .trim();
     if (normalizedChunk.length === 0) {
       return new Float32Array(0);
     }
 
-    await waitForModelReady();
+    await ensureModelReady();
 
     const audioParts: Float32Array[] = [];
     const maxRetries = 5;
@@ -435,13 +459,13 @@ export function useTTSQueuePlayer({
         }
 
         await waitForModelIdle(1200);
-        await waitForModelReady(4000);
+        await ensureModelReady(6000);
         await sleep(80 * (attempt + 1));
       }
     }
 
     return concatAudio(audioParts);
-  }, [concatAudio, isRetryableSynthesisError, sleep, waitForModelIdle, waitForModelReady]);
+  }, [concatAudio, ensureModelReady, isRetryableSynthesisError, sleep, waitForModelIdle]);
 
   const waitForChunkAudio = useCallback(async (chunkIndex: number, sessionId: number) => {
     while (
@@ -518,36 +542,63 @@ export function useTTSQueuePlayer({
   }, [playbackKeepBehindChunks, playbackPrefetchAheadChunks, queueTargetBytes, updateMemoryStats]);
 
   const playAudioBuffer = useCallback(async (audioData: Float32Array) => {
+    if (audioData.length === 0) {
+      // Failed chunk synth can be represented as an empty chunk; skip gracefully.
+      return 'ended' as PlaybackResult;
+    }
+
     const context = audioContextRef.current;
 
     return new Promise<PlaybackResult>((resolve) => {
-      const buffer = context.createBuffer(1, audioData.length, 24000);
-      buffer.getChannelData(0).set(audioData);
-
-      const source = context.createBufferSource();
-      source.buffer = buffer;
-      source.connect(context.destination);
-      runtimeRef.current.currentSource = source;
-
       let resolved = false;
-      source.onEnded = () => {
+      const resolveIfNeeded = (result: PlaybackResult) => {
         if (resolved) {
           return;
         }
 
         resolved = true;
-        runtimeRef.current.currentSource = null;
-        resolve(playerStateRef.current.isPaused ? 'stopped' : 'ended');
+        resolve(result);
       };
 
-      source.start();
-
-      if (playerStateRef.current.isPaused) {
-        try {
-          source.stop();
-        } catch {
-          // no-op
+      try {
+        // Fail fast on invalid sample values instead of throwing deep inside native APIs.
+        const sampleToCheck = Math.min(audioData.length, 128);
+        for (let index = 0; index < sampleToCheck; index += 1) {
+          if (!Number.isFinite(audioData[index])) {
+            throw new Error(`Invalid audio sample at index ${index}`);
+          }
         }
+
+        const buffer = context.createBuffer(1, audioData.length, DEFAULT_TTS_SAMPLE_RATE);
+        buffer.getChannelData(0).set(audioData);
+
+        const source = context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(context.destination);
+        runtimeRef.current.currentSource = source;
+
+        const handleEnded = () => {
+          runtimeRef.current.currentSource = null;
+          resolveIfNeeded(playerStateRef.current.isPaused ? 'stopped' : 'ended');
+        };
+
+        // Some native audio implementations dispatch only one of these handlers.
+        source.onEnded = handleEnded;
+        (source as any).onended = handleEnded;
+
+        source.start();
+
+        if (playerStateRef.current.isPaused) {
+          try {
+            source.stop();
+          } catch {
+            // no-op
+          }
+        }
+      } catch (error) {
+        runtimeRef.current.currentSource = null;
+        console.error('TTS playAudioBuffer error:', error);
+        resolveIfNeeded('stopped');
       }
     });
   }, []);
@@ -564,6 +615,8 @@ export function useTTSQueuePlayer({
     updateMemoryStats();
 
     runtime.generationPromise = (async () => {
+      let consecutiveGenerationFailures = 0;
+
       while (runtimeRef.current.nextChunkToGenerate < runtimeRef.current.chunkTexts.length) {
         if (!playerStateRef.current.isPlaying || runtimeRef.current.sessionId !== sessionId) {
           break;
@@ -595,8 +648,43 @@ export function useTTSQueuePlayer({
           if (runtimeRef.current.sessionId === sessionId && playerStateRef.current.isPlaying) {
             console.error('TTS synth error:', error);
           }
-          break;
+
+          consecutiveGenerationFailures += 1;
+
+          // Recover on the same chunk; do not advance cursor and do not desync UI/audio.
+          try {
+            ttsRef.current.streamStop();
+          } catch {
+            // no-op
+          }
+
+          await waitForModelIdle(1600);
+
+          try {
+            await ensureModelReady(8000);
+          } catch {
+            // Model recovery failed, handled by failure threshold below.
+          }
+
+          if (
+            runtimeRef.current.sessionId !== sessionId
+            || !playerStateRef.current.isPlaying
+            || playerStateRef.current.isPaused
+          ) {
+            break;
+          }
+
+          if (consecutiveGenerationFailures >= 3) {
+            // Hard stop after repeated failures so UI state reflects stalled playback.
+            setPlayerState({ isPlaying: false, isPaused: true });
+            break;
+          }
+
+          await sleep(120 * consecutiveGenerationFailures);
+          continue;
         }
+
+        consecutiveGenerationFailures = 0;
 
         if (!playerStateRef.current.isPlaying || runtimeRef.current.sessionId !== sessionId) {
           break;
@@ -620,7 +708,7 @@ export function useTTSQueuePlayer({
     });
 
     return runtime.generationPromise;
-  }, [playbackPrefetchAheadChunks, pruneAudioQueueWindow, sleep, synthesizeChunk, updateMemoryStats]);
+  }, [ensureModelReady, playbackPrefetchAheadChunks, pruneAudioQueueWindow, setPlayerState, sleep, synthesizeChunk, updateMemoryStats, waitForModelIdle]);
 
   const playQueue = useCallback(async (sessionId: number) => {
     const runtime = runtimeRef.current;
@@ -643,10 +731,46 @@ export function useTTSQueuePlayer({
         const chunkIndex = runtimeRef.current.currentChunkIndex;
         const queuedChunkAudio = await waitForChunkAudio(chunkIndex, sessionId);
         if (!queuedChunkAudio) {
+          // Generation may have stopped before producing this chunk; recover in-place.
+          if (
+            runtimeRef.current.sessionId === sessionId
+            && playerStateRef.current.isPlaying
+            && !playerStateRef.current.isPaused
+            && runtimeRef.current.generationDone
+            && chunkIndex < runtimeRef.current.chunkTexts.length
+          ) {
+            const chunkValue = runtimeRef.current.chunkTexts[chunkIndex];
+
+            try {
+              const recoveredAudio = await synthesizeChunk(chunkValue);
+
+              if (
+                runtimeRef.current.sessionId === sessionId
+                && playerStateRef.current.isPlaying
+                && !playerStateRef.current.isPaused
+              ) {
+                runtimeRef.current.audioQueue[chunkIndex] = recoveredAudio;
+                runtimeRef.current.totalGeneratedSamples += recoveredAudio.length;
+                updateMemoryStats();
+                continue;
+              }
+            } catch (error) {
+              console.error('TTS playback recovery failed:', error);
+              setPlayerState({ isPlaying: false, isPaused: true });
+            }
+          }
+
           break;
         }
 
-        const playbackResult = await playAudioBuffer(queuedChunkAudio);
+        let playbackResult: PlaybackResult;
+        try {
+          playbackResult = await playAudioBuffer(queuedChunkAudio);
+        } catch (error) {
+          console.error('TTS playback loop error:', error);
+          setPlayerState({ isPlaying: false, isPaused: true });
+          break;
+        }
 
         if (
           runtimeRef.current.sessionId !== sessionId
@@ -693,7 +817,7 @@ export function useTTSQueuePlayer({
     });
 
     await runtime.playbackPromise;
-  }, [chunkPauseMs, playAudioBuffer, pruneAudioQueueWindow, setPlayerState, sleep, updateMemoryStats, waitForChunkAudio]);
+  }, [chunkPauseMs, playAudioBuffer, pruneAudioQueueWindow, setPlayerState, sleep, synthesizeChunk, updateMemoryStats, waitForChunkAudio]);
 
   const reset = useCallback(async () => {
     const runtime = runtimeRef.current;
@@ -731,7 +855,7 @@ export function useTTSQueuePlayer({
       return new Float32Array(0);
     }
 
-    await waitForModelReady();
+    await ensureModelReady();
     assertDownloadActive(requestId);
 
     const maxRetries = 6;
@@ -762,7 +886,7 @@ export function useTTSQueuePlayer({
     }
 
     return concatAudio(audioParts);
-  }, [assertDownloadActive, concatAudio, isRetryableSynthesisError, sleep, waitForModelIdle, waitForModelReady]);
+  }, [assertDownloadActive, concatAudio, ensureModelReady, isRetryableSynthesisError, sleep, waitForModelIdle]);
 
   const synthesizeDownloadChunksConcurrent = useCallback(async (
     normalizedChunks: string[],
@@ -831,7 +955,7 @@ export function useTTSQueuePlayer({
     },
   ) => {
     const includeAudioInResult = Boolean(options?.includeAudioInResult);
-    const sampleRate = 24000;
+    const sampleRate = DEFAULT_TTS_SAMPLE_RATE;
     const pcmBatches: Int16Array[] = [];
     const stitchedAudioBatches: Float32Array[] = [];
     let totalSamples = 0;
@@ -1078,7 +1202,7 @@ export function useTTSQueuePlayer({
 
     try {
       await stopGenerationAndWait();
-      await waitForModelReady();
+      await ensureModelReady();
 
       const nextSessionId = runtimeRef.current.sessionId + 1;
       runtimeRef.current.sessionId = nextSessionId;
@@ -1110,12 +1234,13 @@ export function useTTSQueuePlayer({
     } finally {
       runtimeRef.current.isStarting = false;
     }
-  }, [generateQueue, normalizeChunks, playQueue, setPlayerState, setPreparedChunks, stopGenerationAndWait, text, updateMemoryStats, waitForModelReady]);
+  }, [ensureModelReady, generateQueue, normalizeChunks, playQueue, setPlayerState, setPreparedChunks, stopGenerationAndWait, text, updateMemoryStats]);
 
   const pause = useCallback(() => {
     setPlayerState({ isPlaying: false, isPaused: true });
     stopCurrentAudio();
-  }, [setPlayerState, stopCurrentAudio]);
+    void stopGenerationAndWait();
+  }, [setPlayerState, stopCurrentAudio, stopGenerationAndWait]);
 
   const resume = useCallback(() => {
     const runtime = runtimeRef.current;
@@ -1181,23 +1306,29 @@ export function useTTSQueuePlayer({
 
     stopCurrentAudio();
 
+    const shouldAutoPlayAfterSeek = playerStateRef.current.isPlaying || playerStateRef.current.isPaused;
+
     const nextSessionId = runtime.sessionId + 1;
     runtime.sessionId = nextSessionId;
     runtime.currentChunkIndex = nextChunkIndex;
+    runtime.audioQueue = {};
     runtime.generationDone = false;
-    runtime.nextChunkToGenerate = Math.min(runtime.nextChunkToGenerate, nextChunkIndex);
+    runtime.nextChunkToGenerate = nextChunkIndex;
 
     setCurrentChunkIndex(nextChunkIndex);
     setTotalChunks(runtime.chunkTexts.length);
-    pruneAudioQueueWindow(nextSessionId, nextChunkIndex);
+    if (shouldAutoPlayAfterSeek) {
+      setPlayerState({ isPlaying: true, isPaused: false });
+    }
+
     updateMemoryStats();
 
     void generateQueue(nextSessionId);
 
-    if (playerStateRef.current.isPlaying && !playerStateRef.current.isPaused) {
+    if (shouldAutoPlayAfterSeek) {
       void playQueue(nextSessionId);
     }
-  }, [generateQueue, normalizeChunks, playQueue, pruneAudioQueueWindow, setPreparedChunks, stopCurrentAudio, text, updateMemoryStats]);
+  }, [generateQueue, normalizeChunks, playQueue, setPlayerState, setPreparedChunks, stopCurrentAudio, text, updateMemoryStats]);
 
   useEffect(() => {
     let isCancelled = false;

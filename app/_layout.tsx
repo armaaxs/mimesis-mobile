@@ -7,7 +7,6 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useSupabaseAuth } from '@/hooks/use-supabase-auth';
-import { useTTSPreload } from '@/hooks/use-tts-preload';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -19,7 +18,7 @@ export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
 
-  useTTSPreload();
+  // Disabled global preload: reader hook now handles model readiness/recovery directly.
 
   const inAuthRoute = (segments[0] as string | undefined) === 'auth';
 
