@@ -96,7 +96,6 @@ export default function SearchScreen() {
   const runSearch = useCallback(async (q: string, append: boolean) => {
     if (!q.trim()) {
       setBooks([]);
-      setNextUrl(null);
       nextUrlRef.current = null;
       setIsLoading(false);
       setIsLoadingMore(false);

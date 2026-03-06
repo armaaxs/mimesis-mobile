@@ -103,6 +103,9 @@ export default function Reader() {
   const pendingAutoScrollChunkRef = useRef<number | null>(null);
   const [isResumeBootstrapDone, setIsResumeBootstrapDone] = useState(false);
   const progressPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sleepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isSleepMenuOpen, setIsSleepMenuOpen] = useState(false);
+  const [sleepTimerRemainingMs, setSleepTimerRemainingMs] = useState<number | null>(null);
 
   // Bottom Sheet Ref and Snap Points
   const bottomSheetRef = useRef<BottomSheet>(null);
@@ -645,6 +648,74 @@ export default function Reader() {
     };
   }, []);
 
+  useEffect(() => {
+    if (sleepTimerRemainingMs === null) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setSleepTimerRemainingMs((previous) => {
+        if (previous === null) {
+          return null;
+        }
+
+        if (previous <= 1000) {
+          clearInterval(interval);
+          return null;
+        }
+
+        return previous - 1000;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [sleepTimerRemainingMs]);
+
+  useEffect(() => {
+    return () => {
+      if (sleepTimerRef.current) {
+        clearTimeout(sleepTimerRef.current);
+        sleepTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const clearSleepTimer = useCallback(() => {
+    if (sleepTimerRef.current) {
+      clearTimeout(sleepTimerRef.current);
+      sleepTimerRef.current = null;
+    }
+    setSleepTimerRemainingMs(null);
+  }, []);
+
+  const setSleepTimer = useCallback((minutes: number) => {
+    clearSleepTimer();
+
+    const durationMs = minutes * 60 * 1000;
+    setSleepTimerRemainingMs(durationMs);
+    setIsSleepMenuOpen(false);
+
+    sleepTimerRef.current = setTimeout(() => {
+      setSleepTimerRemainingMs(null);
+      sleepTimerRef.current = null;
+
+      if (isPlaying) {
+        void togglePlayPause();
+      }
+    }, durationMs);
+  }, [clearSleepTimer, isPlaying, togglePlayPause]);
+
+  const formatSleepLabel = useMemo(() => {
+    if (sleepTimerRemainingMs === null) {
+      return null;
+    }
+
+    const totalSeconds = Math.max(0, Math.ceil(sleepTimerRemainingMs / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+  }, [sleepTimerRemainingMs]);
+
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     scrollMetricsRef.current.yOffset = event.nativeEvent.contentOffset.y;
   }, []);
@@ -830,13 +901,53 @@ return (
 
           {/* REWRITTEN BUTTON SECTION: One Line, No Dividers */}
           <View style={styles.controlsRow}>
-            <TouchableOpacity 
-              onPress={downloadCurrentTextWithPicker} 
-              disabled={controlsDisabled} 
-              style={[styles.iconButton, controlsDisabled && styles.disabled]}
-            >
-              <Ionicons name={isDownloading ? 'sync' : 'download'} size={24} color="#fff" />
-            </TouchableOpacity>
+            <View style={styles.leftControlsRow}>
+              <TouchableOpacity 
+                onPress={downloadCurrentTextWithPicker} 
+                disabled={controlsDisabled} 
+                style={[styles.iconButton, controlsDisabled && styles.disabled]}
+              >
+                <Ionicons name={isDownloading ? 'sync' : 'download'} size={24} color="#fff" />
+              </TouchableOpacity>
+
+              <View style={styles.sleepTimerContainer}>
+                <TouchableOpacity
+                  onPress={() => setIsSleepMenuOpen((previous) => !previous)}
+                  disabled={controlsDisabled}
+                  style={[styles.iconButton, controlsDisabled && styles.disabled]}
+                >
+                  <Ionicons name="moon" size={22} color={sleepTimerRemainingMs ? '#00d8b4' : '#fff'} />
+                </TouchableOpacity>
+
+                {isSleepMenuOpen && !controlsDisabled && (
+                  <View style={styles.sleepMenu}>
+                    <TouchableOpacity style={styles.sleepOption} onPress={() => setSleepTimer(15)}>
+                      <Text style={styles.sleepOptionText}>15 min</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.sleepOption} onPress={() => setSleepTimer(30)}>
+                      <Text style={styles.sleepOptionText}>30 min</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.sleepOption} onPress={() => setSleepTimer(45)}>
+                      <Text style={styles.sleepOptionText}>45 min</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.sleepOption} onPress={() => setSleepTimer(60)}>
+                      <Text style={styles.sleepOptionText}>1 hour</Text>
+                    </TouchableOpacity>
+                    {sleepTimerRemainingMs !== null && (
+                      <TouchableOpacity style={styles.sleepOption} onPress={clearSleepTimer}>
+                        <Text style={[styles.sleepOptionText, styles.sleepCancelText]}>Cancel timer</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
+
+                {formatSleepLabel && (
+                  <View style={styles.sleepBadge}>
+                    <Text style={styles.sleepBadgeText}>{formatSleepLabel}</Text>
+                  </View>
+                )}
+              </View>
+            </View>
 
             <TouchableOpacity 
               style={[styles.playButton, controlsDisabled && styles.disabled]} 
@@ -1062,6 +1173,57 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
     marginTop: 24,
     width: '100%',
+  },
+  leftControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  sleepTimerContainer: {
+    position: 'relative',
+  },
+  sleepMenu: {
+    position: 'absolute',
+    bottom: 58,
+    left: -12,
+    minWidth: 108,
+    backgroundColor: 'rgba(20, 20, 20, 0.98)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    paddingVertical: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.28,
+    shadowRadius: 12,
+    elevation: 10,
+    zIndex: 40,
+  },
+  sleepOption: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  sleepOptionText: {
+    color: '#F3F3F3',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  sleepCancelText: {
+    color: '#ff8f8f',
+  },
+  sleepBadge: {
+    position: 'absolute',
+    top: -10,
+    right: -10,
+    backgroundColor: '#00bca3',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  sleepBadgeText: {
+    color: '#00110f',
+    fontSize: 10,
+    fontWeight: '800',
   },
   playButton: {
     width: 80,

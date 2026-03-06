@@ -1,6 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View, FlatList, ViewStyle, TextStyle, TouchableOpacity } from 'react-native';
-import { IconSymbol } from '../../components/ui/icon-symbol';
+// import { IconSymbol } from '../../components/ui/icon-symbol';
+import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { BookCard, Book as LibraryBook } from '../../components/BookCard.components';
@@ -9,9 +10,8 @@ import { File } from 'expo-file-system';
 import JSZip from 'jszip';
 import { Book } from '@/models/Book';
 import { reconcileFromSupabase } from '@/services/syncService';
-import { deleteBook, listBookCatalog } from '@/utils/bookRepository';
+import { deleteBook, listBookCatalog, saveBook } from '@/utils/bookRepository';
 import { extractEpubImportPayload } from '@/utils/epubparser';
-import { setTransientDto } from '@/utils/transientDtoMap';
 
 const BOOKS: LibraryBook[] = [
   { id: '1', title: 'Stoner', author: 'John Williams', cover: null , uri:''},
@@ -57,9 +57,9 @@ export default function LibraryScreen() {
           onPress={() => router.push('/Settings')}
           accessibilityLabel="Settings"
         >
-          <IconSymbol name="chevron.left.forwardslash.chevron.right" size={28} color="#cbd5d1" />
-      </TouchableOpacity>
-    </View>
+          <Ionicons name="settings" size={28} color="#cbd5d1" />
+        </TouchableOpacity>
+      </View>
       <View style={styles.headingRow}>
         <Text style={styles.greeting}>Your Library</Text>
 
@@ -115,11 +115,9 @@ export default function LibraryScreen() {
         chapters: importedPayload.chapters,
       });
 
-      // Keep import transient until user explicitly saves or reads it
-      setTransientDto(importedBook.id, importedBook.toDTO());
-
-      const libraryBook = importedBook.toLibraryItem();
-      setBooks((previousBooks) => dedupeBooks([libraryBook, ...previousBooks]));
+      await saveBook(importedBook);
+      const refreshedCatalog = await listBookCatalog();
+      setBooks(dedupeBooks([...refreshedCatalog, ...BOOKS]));
     } catch (error) {
       console.error('Import pipeline failed:', error);
     }
