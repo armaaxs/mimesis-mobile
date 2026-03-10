@@ -4,8 +4,14 @@ import type { Session, User } from '@supabase/supabase-js';
 
 import { getCurrentSession, signInWithOAuthProvider, supabase } from '@/services/supabaseAuth';
 import { clearUserSessionCache } from '@/services/sessionCache';
-import { flushSyncQueue, hydrateLocalLibraryFromUserBooks, reconcileFromSupabase } from '@/services/syncService';
+import {
+  flushSyncQueue,
+  hydrateLocalLibraryFromUserBooks,
+  pullUserSettingsFromSupabase,
+  reconcileFromSupabase,
+} from '@/services/syncService';
 import { listBookCatalog } from '@/utils/bookRepository';
+import { overwriteUserSettingsLocal } from '@/utils/userSettingsRepository';
 
 export const useSupabaseAuth = () => {
   const [session, setSession] = useState<Session | null>(null);
@@ -29,6 +35,10 @@ export const useSupabaseAuth = () => {
       }
 
       await flushSyncQueue();
+      const remoteSettings = await pullUserSettingsFromSupabase();
+      if (remoteSettings) {
+        await overwriteUserSettingsLocal(remoteSettings);
+      }
       await hydrateLocalLibraryFromUserBooks();
 
       const localBooks = await listBookCatalog();
