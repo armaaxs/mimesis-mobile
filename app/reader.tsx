@@ -1,6 +1,5 @@
 import ChunkSeeker from '@/components/ChunkSeeker.component';
 import DownloadOverlay from '@/components/DownloadOverlay.component';
-import Screenheader from '@/components/Screenheader.component';
 import { useTTSQueuePlayer } from '@/hooks/use-tts-queue-player';
 import { Book, BookReadingProgressDTO } from '@/models/Book';
 import { pullUserBookProgressForBook } from '@/services/syncService';
@@ -11,12 +10,12 @@ import { getChapterText, parseEpub } from '@/utils/epubparser';
 import { Ionicons } from '@expo/vector-icons';
 import BottomSheet from '@gorhom/bottom-sheet'; // New Import
 import { File } from 'expo-file-system';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import JSZip from 'jszip';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'; // Added useRef
 import { ActivityIndicator, Animated, Image, NativeSyntheticEvent, NativeScrollEvent, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler'; // New Import
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import ChapterIndex from './bookIndex'; // Importing the ChapterIndex component
 
 type ReaderChapter = {
@@ -25,6 +24,9 @@ type ReaderChapter = {
   html?: string;
   plainText?: string;
 };
+
+const READER_DOCK_BASE_HEIGHT = 150;
+const READER_DOCK_GAP = 1;
 
 const isSkippableChapter = (chapter: ReaderChapter): boolean => {
   const normalizedTitle = (chapter.title || '')
@@ -75,6 +77,8 @@ const buildFallbackChapterTitle = (chapter: ReaderChapter, index: number): strin
 
 
 export default function Reader() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ 
     title?: string; 
     id?: string; 
@@ -402,7 +406,9 @@ export default function Reader() {
   } = useTTSQueuePlayer({
     text: rawChapterText,
     downloadFileBaseName,
-    chunkSize: 200,
+    chunkSize: 170,
+    chunkPauseMs: 240,
+    playbackRate: 0.9,
     playbackPrefetchAheadChunks: 2,
     playbackKeepBehindChunks: 0,
     queueTargetMemoryMB: 32,
@@ -518,6 +524,31 @@ export default function Reader() {
     return menuChapters[currentChapterNo]?.title || `Chapter ${currentChapterNo + 1}`;
   }, [currentChapterNo, menuChapters]);
 
+  const displayTitle = persistedBook?.title || params.title || 'Reader';
+  const displayAuthor = persistedBook?.author || params.author || 'Unknown Author';
+  const chapterPositionLabel = `${Math.min(currentChapterNo + 1, Math.max(menuChapters.length, 1))} of ${Math.max(menuChapters.length, 1)}`;
+  const chapterProgressPercent = totalChunks > 1
+    ? Math.round((currentChunkIndex / (totalChunks - 1)) * 100)
+    : 0;
+  const canGoToPreviousChapter = currentChapterNo > 0;
+  const canGoToNextChapter = currentChapterNo < menuChapters.length - 1;
+
+  const handlePreviousChapter = useCallback(() => {
+    if (!canGoToPreviousChapter) {
+      return;
+    }
+
+    setCurrentChapterNo((previous) => Math.max(0, previous - 1));
+  }, [canGoToPreviousChapter]);
+
+  const handleNextChapter = useCallback(() => {
+    if (!canGoToNextChapter) {
+      return;
+    }
+
+    setCurrentChapterNo((previous) => Math.min(menuChapters.length - 1, previous + 1));
+  }, [canGoToNextChapter, menuChapters.length]);
+
   // ────────────────────────────────────────────────────────────────────────
   // SCROLL LOGIC — Kindle-style continuous scroll with pinned active chunk
   // ────────────────────────────────────────────────────────────────────────
@@ -528,7 +559,7 @@ export default function Reader() {
   // scrolls so the new chunk arrives at the pin position. If the user
   // scrolls away, the next chunk change snaps it right back.
   // ────────────────────────────────────────────────────────────────────────
-  const BOTTOM_PANEL_HEIGHT = 240;
+  const BOTTOM_PANEL_HEIGHT = 176;
   const READING_LINE_RATIO = 0.33;
   const SCROLL_PADDING_TOP = 12; // must match scrollPadding.paddingTop in styles
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -593,18 +624,6 @@ export default function Reader() {
     scrollToChunk(index);
     void seekToChunk(index);
   }, [controlsDisabled, scrollToChunk, seekToChunk]);
-
-  const handleRemotePlay = useCallback(() => {
-    if (!isPlaying) {
-      void togglePlayPause();
-    }
-  }, [isPlaying, togglePlayPause]);
-
-  const handleRemotePause = useCallback(() => {
-    if (isPlaying) {
-      void togglePlayPause();
-    }
-  }, [isPlaying, togglePlayPause]);
 
   // Temporarily disabled to isolate physical-device TTS session conflicts.
   // Re-enable after confirming stable chunk playback on device.
@@ -743,69 +762,163 @@ export default function Reader() {
     outputRange: [14, 0],
   });
 
-  
+  const compactBottomInset = Math.max(0, insets.bottom - 10);
+  const readerDockHeight = READER_DOCK_BASE_HEIGHT + compactBottomInset;
+  const readerDockStyle = useMemo(() => ({
+    bottom: 6,
+    height: readerDockHeight,
+    paddingBottom: 10 + compactBottomInset,
+  }), [compactBottomInset, readerDockHeight]);
 
+  const readerSurfaceSpacingStyle = useMemo(() => ({
+    marginBottom: readerDockHeight + READER_DOCK_GAP,
+  }), [readerDockHeight]);
 
-return (
+  const coverSceneSpacingStyle = useMemo(() => ({
+    paddingTop: 20,
+    paddingBottom: readerDockHeight + READER_DOCK_GAP + 10,
+  }), [readerDockHeight]);
+
+  return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <View style={styles.mainWrapper}>
-        <Stack.Screen options={{ title: persistedBook?.title || params.title || 'Reader', headerShown: false }} />
-        
+      <View style={[styles.mainWrapper, isTextMode && styles.mainWrapperReader]}>
+        <Stack.Screen options={{ title: displayTitle, headerShown: false }} />
+
         <SafeAreaView style={styles.safeAreaTop}>
-           <Screenheader title={persistedBook?.title || params.title} />
-           <View style={styles.content}>
-              <View style={styles.contentStage}>
-                <Animated.View
-                  pointerEvents={isTextMode ? 'none' : 'auto'}
-                  style={[
-                    styles.animatedPane,
-                    {
-                      opacity: coverOpacity,
-                      transform: [{ translateY: coverTranslateY }],
-                    },
-                  ]}
-                >
-                  <View style={styles.coverContainer}>
-                    <TouchableOpacity activeOpacity={0.85} onPress={() => setIsTextMode(true)} style={styles.coverCard}>
+          <View style={[styles.chromeHeader, isTextMode && styles.chromeHeaderReader]}>
+            <TouchableOpacity style={styles.headerCircleButton} onPress={() => router.back()} activeOpacity={0.78}>
+              <Ionicons name="chevron-back" size={22} color="#f6efe3" />
+            </TouchableOpacity>
+
+            <View style={styles.chromeTitleGroup}>
+              <Text style={[styles.chromeEyebrow, isTextMode && styles.chromeEyebrowReader]} numberOfLines={1}>
+                {isTextMode ? displayAuthor : 'Your reading session'}
+              </Text>
+              <Text style={[styles.chromeTitle, isTextMode && styles.chromeTitleReader]} numberOfLines={1}>
+                {isTextMode ? currentChapterTitle : displayTitle}
+              </Text>
+            </View>
+
+            <View style={styles.headerActions}>
+              <TouchableOpacity
+                style={[styles.modeToggleButton, isTextMode && styles.modeToggleButtonReader]}
+                onPress={() => setIsTextMode((previous) => !previous)}
+                activeOpacity={0.82}
+              >
+                <Ionicons
+                  name={isTextMode ? 'albums-outline' : 'book-outline'}
+                  size={16}
+                  color="#f7efe2"
+                />
+                <Text style={[styles.modeToggleText, isTextMode && styles.modeToggleTextReader]}>
+                  {isTextMode ? 'Cover' : 'Read'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleIndexOpen}
+                disabled={controlsDisabled}
+                style={[
+                  styles.headerCircleButton,
+                  isTextMode && styles.headerCircleButtonReader,
+                  controlsDisabled && styles.disabled,
+                ]}
+                activeOpacity={0.78}
+              >
+                <Ionicons name="list" size={18} color="#f6efe3" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={styles.content}>
+            <View style={styles.contentStage}>
+              <Animated.View
+                pointerEvents={isTextMode ? 'none' : 'auto'}
+                style={[
+                  styles.animatedPane,
+                  {
+                    opacity: coverOpacity,
+                    transform: [{ translateY: coverTranslateY }],
+                  },
+                ]}
+              >
+                <View style={[styles.coverScene, coverSceneSpacingStyle]}>
+                  <View style={styles.coverCardFrame}>
+                    <TouchableOpacity activeOpacity={0.9} onPress={() => setIsTextMode(true)} style={styles.coverCard}>
                       {(persistedBook?.cover || params.cover) ? (
                         <Image source={{ uri: persistedBook?.cover || params.cover }} style={styles.coverImage} resizeMode="cover" />
                       ) : (
                         <View style={styles.coverPlaceholder}>
                           <Text style={styles.coverPlaceholderText}>
-                            {(persistedBook?.title || params.title || 'Book').charAt(0).toUpperCase()}
+                            {displayTitle.charAt(0).toUpperCase()}
                           </Text>
                         </View>
                       )}
                       <View style={styles.coverChapterOverlay}>
-                        <Text style={styles.coverChapterText} numberOfLines={1}>
+                        <Text style={styles.coverChapterEyebrow}>Current chapter</Text>
+                        <Text style={styles.coverChapterText} numberOfLines={2}>
                           {currentChapterTitle}
                         </Text>
-                        <TouchableOpacity
-                          onPress={handleDownloadPress}
-                          disabled={controlsDisabled}
-                          style={[styles.coverDownloadButton, controlsDisabled && styles.disabled]}
-                        >
-                          <Ionicons name={isDownloading ? 'sync' : 'download'} size={16} color="#fff" />
-                        </TouchableOpacity>
                       </View>
                     </TouchableOpacity>
                   </View>
-                </Animated.View>
+                  <Text style={styles.coverAuthorLine} numberOfLines={1}>
+                    {displayAuthor}
+                  </Text>
 
-                <Animated.View
-                  pointerEvents={isTextMode ? 'auto' : 'none'}
-                  style={[
-                    styles.animatedPane,
-                    {
-                      opacity: textOpacity,
-                      transform: [{ translateY: textTranslateY }],
-                    },
-                  ]}
-                >
-                  <TouchableOpacity style={styles.readerBackButton} onPress={() => setIsTextMode(false)}>
-                    <Ionicons name="chevron-back" size={18} color="#FFFFFF" />
-                    <Text style={styles.readerBackText}>Cover</Text>
-                  </TouchableOpacity>
+                  <View style={styles.coverActionRow}>
+                    <TouchableOpacity
+                      style={[styles.coverMiniButton, !canGoToPreviousChapter && styles.disabled]}
+                      onPress={handlePreviousChapter}
+                      disabled={!canGoToPreviousChapter}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="chevron-back" size={18} color="#f6efe3" />
+                    </TouchableOpacity>
+
+                    <TouchableOpacity style={styles.coverReadButton} onPress={() => setIsTextMode(true)} activeOpacity={0.84}>
+                      <Ionicons name="book-outline" size={18} color="#11100d" />
+                      <Text style={styles.coverReadButtonText}>Open Reader</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.coverMiniButton, !canGoToNextChapter && styles.disabled]}
+                      onPress={handleNextChapter}
+                      disabled={!canGoToNextChapter}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="chevron-forward" size={18} color="#f6efe3" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </Animated.View>
+
+              <Animated.View
+                pointerEvents={isTextMode ? 'auto' : 'none'}
+                style={[
+                  styles.animatedPane,
+                  {
+                    opacity: textOpacity,
+                    transform: [{ translateY: textTranslateY }],
+                  },
+                ]}
+              >
+                <View style={[styles.readerSurface, readerSurfaceSpacingStyle]}>
+                  <View style={styles.readerMetaBar}>
+                    <View style={styles.readerMetaTextGroup}>
+                      <Text style={styles.readerMetaEyebrow} numberOfLines={1}>
+                        {displayTitle}
+                      </Text>
+                      <Text style={styles.readerMetaTitle} numberOfLines={1}>
+                        {currentChapterTitle}
+                      </Text>
+                    </View>
+
+                    <View style={styles.readerMetaChip}>
+                      <Text style={styles.readerMetaChipText}>{chapterPositionLabel}</Text>
+                    </View>
+                  </View>
+
                   <ScrollView
                     ref={chapterScrollRef}
                     contentContainerStyle={styles.scrollPadding}
@@ -823,13 +936,10 @@ return (
                     <View style={styles.blockList}>
                       {styledBlocks.map((block, blockIndex) => {
                         const blockChunkIndices = [...new Set(block.runs.map((r) => r.chunkIndex))];
-
-                        // Pre-compute each chunk's character-offset ratio within
-                        // this block so onLayout can place them proportionally
-                        // instead of pinning every chunk to the block's top edge.
                         const totalChars = block.runs.reduce((sum, r) => sum + r.text.length, 0);
                         let charCursor = 0;
                         const chunkStartRatio: Record<number, number> = {};
+
                         for (const run of block.runs) {
                           if (!(run.chunkIndex in chunkStartRatio)) {
                             chunkStartRatio[run.chunkIndex] = totalChars > 0 ? charCursor / totalChars : 0;
@@ -843,10 +953,9 @@ return (
                             style={block.type !== 'p' ? styles.headingBlock : styles.paragraphBlock}
                             onLayout={(event) => {
                               const { y, height } = event.nativeEvent.layout;
-                              // y is relative to blockList; add SCROLL_PADDING_TOP
-                              // for content-container coordinates used by scrollTo.
                               const blockY = y + SCROLL_PADDING_TOP;
                               let anyNew = false;
+
                               for (const ci of blockChunkIndices) {
                                 if (!chunkLayoutMapRef.current[ci]) {
                                   const ratio = chunkStartRatio[ci] ?? 0;
@@ -857,6 +966,7 @@ return (
                                   anyNew = true;
                                 }
                               }
+
                               if (anyNew && pendingAutoScrollChunkRef.current !== null) {
                                 schedulePendingFlush();
                               }
@@ -890,17 +1000,40 @@ return (
                           </View>
                         );
                       })}
+
                       {styledBlocks.length === 0 && (
                         <Text style={styles.emptyChunkText}>No readable content found for this chapter.</Text>
                       )}
                     </View>
                   </ScrollView>
-                </Animated.View>
-              </View>
-           </View>
+                </View>
+              </Animated.View>
+            </View>
+          </View>
         </SafeAreaView>
 
-        <View style={styles.staticTab}>
+        <View style={[styles.bottomDock, readerDockStyle]}>
+          <View style={styles.dockMetaRow}>
+            <View style={styles.dockStatBlock}>
+              <Text style={styles.dockStatLabel}>Completed</Text>
+              <Text style={styles.dockStatValue}>{chapterProgressPercent}%</Text>
+            </View>
+
+            <TouchableOpacity
+              onPress={handleIndexOpen}
+              disabled={controlsDisabled}
+              style={[styles.chapterPill, controlsDisabled && styles.disabled]}
+              activeOpacity={0.82}
+            >
+              <Ionicons name="list" size={14} color="#f6efe3" />
+              <Text style={styles.chapterPillText} numberOfLines={1}>
+                {currentChapterTitle}
+              </Text>
+            </TouchableOpacity>
+
+            <View style={styles.dockMetaSpacer} />
+          </View>
+
           <ChunkSeeker
             progress={seekerProgress}
             currentChunk={currentChunkIndex}
@@ -909,16 +1042,23 @@ return (
             onSeek={handleSeek}
           />
 
-          {/* REWRITTEN BUTTON SECTION: One Line, No Dividers */}
           <View style={styles.controlsRow}>
-            <View style={styles.leftControlsRow}>
+            <View style={styles.sideControls}>
+              <TouchableOpacity
+                onPress={handleDownloadPress}
+                disabled={controlsDisabled}
+                style={[styles.iconButton, controlsDisabled && styles.disabled]}
+              >
+                <Ionicons name={isDownloading ? 'sync' : 'download-outline'} size={20} color="#f6efe3" />
+              </TouchableOpacity>
+
               <View style={styles.sleepTimerContainer}>
                 <TouchableOpacity
                   onPress={() => setIsSleepMenuOpen((previous) => !previous)}
                   disabled={controlsDisabled}
                   style={[styles.iconButton, controlsDisabled && styles.disabled]}
                 >
-                  <Ionicons name="moon" size={22} color={sleepTimerRemainingMs ? '#00d8b4' : '#fff'} />
+                  <Ionicons name="moon-outline" size={20} color={sleepTimerRemainingMs ? '#f1cf90' : '#f6efe3'} />
                 </TouchableOpacity>
 
                 {isSleepMenuOpen && !controlsDisabled && (
@@ -951,37 +1091,47 @@ return (
               </View>
             </View>
 
-            <TouchableOpacity 
-              style={[styles.playButton, controlsDisabled && styles.disabled]} 
-              onPress={togglePlayPause} 
+            <TouchableOpacity
+              style={[styles.playButton, controlsDisabled && styles.disabled]}
+              onPress={togglePlayPause}
               disabled={controlsDisabled}
             >
               {isDownloading ? (
-                <ActivityIndicator size="large" color="#ffffff" />
+                <ActivityIndicator size="large" color="#17120f" />
               ) : (
-                <Ionicons name={isPlaying ? 'pause' : 'play'} size={50} color="#fff" />
+                <Ionicons name={isPlaying ? 'pause' : 'play'} size={34} color="#17120f" />
               )}
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              onPress={handleIndexOpen} 
-              disabled={controlsDisabled} 
-              style={[styles.iconButton, controlsDisabled && styles.disabled]}
-            >
-              <Ionicons name="menu" size={24} color="#fff" />
-            </TouchableOpacity>
+            <View style={styles.sideControls}>
+              <TouchableOpacity
+                onPress={handlePreviousChapter}
+                disabled={!canGoToPreviousChapter || controlsDisabled}
+                style={[styles.iconButton, (!canGoToPreviousChapter || controlsDisabled) && styles.disabled]}
+              >
+                <Ionicons name="play-skip-back" size={19} color="#f6efe3" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleNextChapter}
+                disabled={!canGoToNextChapter || controlsDisabled}
+                style={[styles.iconButton, (!canGoToNextChapter || controlsDisabled) && styles.disabled]}
+              >
+                <Ionicons name="play-skip-forward" size={19} color="#f6efe3" />
+              </TouchableOpacity>
+            </View>
           </View>
-        </View> 
+        </View>
 
         <BottomSheet
           ref={bottomSheetRef}
           index={0}
           snapPoints={snapPoints}
           enablePanDownToClose={true}
-          backgroundStyle={{ backgroundColor: '#1A1A1A' }}
-          handleIndicatorStyle={{ backgroundColor: '#fff' }}
+          backgroundStyle={{ backgroundColor: '#1a1714' }}
+          handleIndicatorStyle={{ backgroundColor: '#c3b39c' }}
         >
-          <ChapterIndex 
+          <ChapterIndex
             chapters={menuChapters}
             currentChapterNo={currentChapterNo}
             onSelectChapter={(index) => {
@@ -997,16 +1147,95 @@ return (
 }
 
 const styles = StyleSheet.create({
-  // --- LAYOUT ---
-  mainWrapper: { 
-    flex: 1, 
-    backgroundColor: '#121212' 
+  mainWrapper: {
+    flex: 1,
+    backgroundColor: '#11100d',
   },
-  safeAreaTop: { 
-    flex: 1 
+  mainWrapperReader: {
+    backgroundColor: '#11100d',
   },
-  content: { 
-    flex: 1 
+  safeAreaTop: {
+    flex: 1,
+  },
+  chromeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingTop: 6,
+    paddingBottom: 10,
+  },
+  chromeHeaderReader: {
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.07)',
+  },
+  headerCircleButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  headerCircleButtonReader: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  chromeTitleGroup: {
+    flex: 1,
+    marginHorizontal: 14,
+  },
+  chromeEyebrow: {
+    color: '#a99b88',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  chromeEyebrowReader: {
+    color: '#a99b88',
+  },
+  chromeTitle: {
+    color: '#f6efe3',
+    fontSize: 18,
+    fontFamily: 'Georgia',
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  chromeTitleReader: {
+    color: '#f6efe3',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  modeToggleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    marginRight: 8,
+  },
+  modeToggleButtonReader: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  modeToggleText: {
+    color: '#f7efe2',
+    marginLeft: 6,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  modeToggleTextReader: {
+    color: '#f7efe2',
+  },
+  content: {
+    flex: 1,
   },
   contentStage: {
     flex: 1,
@@ -1015,22 +1244,26 @@ const styles = StyleSheet.create({
   animatedPane: {
     ...StyleSheet.absoluteFillObject,
   },
-
-  // --- COVER CARD ---
-  coverContainer: {
+  coverScene: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
     paddingHorizontal: 24,
-    paddingBottom: 150,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  coverCardFrame: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: 0.45,
+    shadowRadius: 30,
+    elevation: 18,
   },
   coverCard: {
-    width: '82%',
-    maxWidth: 340,
-    aspectRatio: 0.7,
-    borderRadius: 16,
+    width: 280,
+    maxWidth: '100%',
+    aspectRatio: 0.69,
+    borderRadius: 24,
     overflow: 'hidden',
-    backgroundColor: '#1A1A1A',
+    backgroundColor: '#201b17',
   },
   coverImage: {
     width: '100%',
@@ -1040,234 +1273,326 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#252525',
+    backgroundColor: '#2a231d',
   },
   coverPlaceholderText: {
-    color: '#FFFFFF',
-    fontSize: 82,
+    color: '#f6efe3',
+    fontSize: 92,
     fontWeight: '700',
-  },
-  coverTapHint: {
-    marginTop: 14,
-    color: '#A7A7A7',
-    fontSize: 14,
   },
   coverChapterOverlay: {
     position: 'absolute',
-    top: 12,
-    left: 12,
-    right: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    backgroundColor: 'rgba(0,0,0,0.52)',
+    left: 18,
+    right: 18,
+    bottom: 18,
+    padding: 16,
+    borderRadius: 18,
+    backgroundColor: 'rgba(15, 12, 9, 0.7)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
+    borderColor: 'rgba(255,255,255,0.14)',
+  },
+  coverChapterEyebrow: {
+    color: '#d2c2ae',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginBottom: 6,
   },
   coverChapterText: {
-    flex: 1,
-    color: '#FFFFFF',
-    fontSize: 14,
+    color: '#fff9f0',
+    fontSize: 20,
+    lineHeight: 26,
+    fontFamily: 'Georgia',
     fontWeight: '700',
   },
-  coverDownloadButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    marginLeft: 10,
+  coverAuthorLine: {
+    color: '#a99b88',
+    fontSize: 16,
+    marginTop: 18,
+    marginBottom: 18,
+    fontWeight: '600',
   },
-
-  // --- NAVIGATION ---
-  readerBackButton: {
+  coverActionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
-    marginLeft: 12,
-    marginTop: 6,
-    marginBottom: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+    justifyContent: 'center',
+    width: '100%',
+    maxWidth: 360,
   },
-  readerBackText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    marginLeft: 2,
+  coverMiniButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
-
-  // --- STYLED BLOCK RENDERING ---
-  scrollPadding: { 
-    // Large bottom padding ensures the last chunk can scroll up
-    // to the upper-third pin position above the 240px bottom panel.
-    paddingBottom: 500, 
-    paddingHorizontal: 20, 
-    paddingTop: 12 
+  coverReadButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
+    height: 58,
+    borderRadius: 27,
+    backgroundColor: '#f2e6cf',
+    marginHorizontal: 14,
+    paddingHorizontal: 18,
+  },
+  coverReadButtonText: {
+    color: '#17120f',
+    fontSize: 15,
+    fontWeight: '800',
+    marginLeft: 8,
+  },
+  readerSurface: {
+    flex: 1,
+    marginHorizontal: 14,
+    marginTop: 8,
+    borderRadius: 30,
+    overflow: 'hidden',
+    backgroundColor: '#171310',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  readerMetaBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 22,
+    paddingTop: 18,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
+  readerMetaTextGroup: {
+    flex: 1,
+    marginRight: 14,
+  },
+  readerMetaEyebrow: {
+    color: '#a99b88',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  readerMetaTitle: {
+    color: '#f6efe3',
+    fontSize: 20,
+    lineHeight: 26,
+    fontFamily: 'Georgia',
+    fontWeight: '700',
+    marginTop: 5,
+  },
+  readerMetaChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  readerMetaChipText: {
+    color: '#d6c5b0',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  scrollPadding: {
+    paddingBottom: 440,
+    paddingHorizontal: 24,
+    paddingTop: 20,
   },
   blockList: {},
   paragraphBlock: {
-    marginBottom: 16,
+    marginBottom: 18,
   },
   headingBlock: {
-    marginTop: 20,
-    marginBottom: 10,
+    marginTop: 26,
+    marginBottom: 12,
   },
   blockText: {
-    color: '#C8C8C8',
-    fontSize: 18,
-    lineHeight: 30,
+    color: '#ebe1d3',
+    fontSize: 21,
+    lineHeight: 38,
     fontFamily: 'Georgia',
   },
   h1Text: {
-    fontSize: 22,
+    fontSize: 29,
+    lineHeight: 36,
     fontWeight: '700',
-    color: '#FFFFFF',
-    lineHeight: 32,
+    color: '#fff6ea',
   },
   h2Text: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#EEEEEE',
-    lineHeight: 30,
+    fontSize: 25,
+    lineHeight: 34,
+    fontWeight: '700',
+    color: '#f8efe2',
   },
   h3Text: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#E0E0E0',
-    lineHeight: 28,
+    fontSize: 22,
+    lineHeight: 30,
+    fontWeight: '700',
+    color: '#f1e6d8',
   },
   boldRun: {
     fontWeight: '700',
-    color: '#E8E8E8',
   },
   italicRun: {
     fontStyle: 'italic',
   },
   activeRun: {
-    color: '#FFFFFF',
-    backgroundColor: 'rgba(0, 216, 180, 0.22)',
+    backgroundColor: 'rgba(0, 188, 163, 0.22)',
+    color: '#ffffff',
   },
   emptyChunkText: {
-    color: '#515151',
+    color: '#8d7d6d',
     fontSize: 15,
     textAlign: 'center',
     marginTop: 20,
   },
-
-  // --- GLASSY BOTTOM PANEL ---
-  staticTab: {
+  bottomDock: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 240,
-    backgroundColor: 'rgba(10, 10, 10, 0.75)',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    left: 12,
+    right: 12,
+    borderRadius: 28,
+    backgroundColor: '#100b09',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    paddingTop: 12,
-    paddingHorizontal: 8,
-    paddingBottom: 38,
+    borderColor: 'rgba(255,255,255,0.08)',
+    paddingTop: 14,
+    overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 18,
+    shadowOffset: { width: 0, height: -6 },
+    shadowOpacity: 0.28,
+    shadowRadius: 22,
     elevation: 20,
   },
-
-  // --- UNIFIED CONTROL ROW (No Dividers) ---
+  dockMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+  },
+  dockStatBlock: {
+    width: 84,
+  },
+  dockMetaSpacer: {
+    width: 84,
+  },
+  dockStatLabel: {
+    color: '#a59584',
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  dockStatValue: {
+    color: '#f8f1e4',
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  chapterPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    marginHorizontal: 14,
+  },
+  chapterPillText: {
+    flex: 1,
+    color: '#f8f1e4',
+    fontSize: 13,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
   controlsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 40,
-    marginTop: 24,
-    width: '100%',
+    paddingHorizontal: 20,
+    marginTop: 14,
   },
-  leftControlsRow: {
+  sideControls: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
   },
   sleepTimerContainer: {
     position: 'relative',
+    marginLeft: 10,
   },
   sleepMenu: {
     position: 'absolute',
     bottom: 58,
-    left: -12,
-    minWidth: 108,
-    backgroundColor: 'rgba(20, 20, 20, 0.98)',
-    borderRadius: 12,
+    right: -8,
+    minWidth: 112,
+    backgroundColor: '#1d1814',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderColor: 'rgba(255,255,255,0.08)',
     paddingVertical: 6,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.28,
-    shadowRadius: 12,
-    elevation: 10,
-    zIndex: 40,
+    shadowOpacity: 0.24,
+    shadowRadius: 16,
+    elevation: 12,
+    zIndex: 50,
   },
   sleepOption: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
   },
   sleepOptionText: {
-    color: '#F3F3F3',
+    color: '#f4ebde',
     fontSize: 13,
     fontWeight: '600',
   },
   sleepCancelText: {
-    color: '#ff8f8f',
+    color: '#e3a7a7',
   },
   sleepBadge: {
     position: 'absolute',
-    top: -10,
-    right: -10,
-    backgroundColor: '#00bca3',
+    top: -8,
+    right: -8,
     borderRadius: 10,
+    backgroundColor: '#f1cf90',
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
   sleepBadgeText: {
-    color: '#00110f',
+    color: '#19110b',
     fontSize: 10,
     fontWeight: '800',
   },
   playButton: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    justifyContent: 'center',
+    width: 68,
+    height: 68,
+    borderRadius: 34,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-    // Depth for the main action
+    justifyContent: 'center',
+    backgroundColor: '#f2e6cf',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    elevation: 10,
   },
   iconButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(255,255,255,0.08)',
   },
-  disabled: { 
-    opacity: 0.4 
+  disabled: {
+    opacity: 0.42,
   },
 });

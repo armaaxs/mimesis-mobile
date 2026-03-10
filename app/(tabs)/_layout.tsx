@@ -5,7 +5,7 @@ import { BlurView } from 'expo-blur';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
+import { AppPalette, Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function TabLayout() {
@@ -16,38 +16,37 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: palette.tint,
-        tabBarInactiveTintColor: '#666666', // Darkened the inactive state a bit
+        tabBarInactiveTintColor: AppPalette.textSubtle,
         headerShown: false,
         tabBarButton: HapticTab,
         
-        // 1. The Darkened Floating Glass Background
         tabBarBackground: () => (
           <View style={styles.glassContainer}>
             <BlurView
-              tint="dark"
-              intensity={100} // Maxed out the blur
+              tint="light"
+              intensity={55}
               style={StyleSheet.absoluteFill}
             />
-            {/* This extra layer explicitly darkens the glass further */}
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)' }]} />
+            <View style={styles.overlay} />
           </View>
         ),
 
-        // 2. The Floating Dimensions & Shadows
         tabBarStyle: {
           position: 'absolute',
-          bottom: Platform.OS === 'ios' ? 30 : 20, // Lifts it off the bottom screen edge
-          left: 20,  // Pinches it in from the left
-          right: 20, // Pinches it in from the right
-          height: 64, // Slightly shorter for a sleek pill look
-          borderRadius: 32, // Creates the perfect rounded pill shape
+          bottom: Platform.OS === 'ios' ? 30 : 20,
+          left: 20,
+          right: 20,
+          height: 64,
+          borderRadius: 32,
           backgroundColor: 'transparent', 
           borderTopWidth: 0,
-          elevation: 10, // Shadow for Android
-          shadowColor: '#000000', // Shadow for iOS
+          elevation: 10,
+          shadowColor: AppPalette.shadow,
           shadowOffset: { width: 0, height: 8 },
-          shadowOpacity: 0.8,
-          shadowRadius: 15,
+          shadowOpacity: 0.22,
+          shadowRadius: 18,
+          borderWidth: 1,
+          borderColor: 'rgba(180, 157, 123, 0.32)',
         },
         
         tabBarLabelStyle: {
@@ -77,11 +76,14 @@ export default function TabLayout() {
   );
 }
 
-// 3. We need this style so the BlurView respects the border radius of the pill
 const styles = StyleSheet.create({
   glassContainer: {
     flex: 1,
     borderRadius: 64,
-    overflow: 'hidden', // This forces the blur to stay inside the rounded corners
-  }
+    overflow: 'hidden',
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(251, 248, 241, 0.88)',
+  },
 });

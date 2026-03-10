@@ -17,6 +17,7 @@ import { Buffer } from 'buffer';
 import { Directory, File, Paths } from 'expo-file-system';
 import JSZip from 'jszip';
 import { Book, LibraryBookItem, BookDTO, BookMetadataDTO, BookReadingProgressDTO } from '@/models/Book';
+import { AppPalette } from '@/constants/theme';
 import { getBookByUri, saveBook, getBookById } from '@/utils/bookRepository';
 import { extractEpubImportPayload } from '@/utils/epubparser';
 import { getTransientDto, setTransientDto, deleteTransientDto } from '@/utils/transientDtoMap';
@@ -55,7 +56,6 @@ export default function BookDetailScreen() {
   const [preparedLibraryBook, setPreparedLibraryBook] = useState<LibraryBookItem | null>(null);
   const [bookDTO, setBookDTO] = useState<BookDTO | null>(null);
   const [gutendexBook, setGutendexBook] = useState<BookData | null>(null);
-  const [isSaved, setIsSaved] = useState(false);
 
   const routeMetadata = useMemo<BookMetadataDTO | null>(() => {
     if (!rawRouteMetadata) return null;
@@ -83,7 +83,6 @@ export default function BookDetailScreen() {
         setGutendexBook(parsed);
         setBookDTO(null);
         setPreparedLibraryBook(null);
-        setIsSaved(false);
       } catch (e) {
         console.warn('Failed to parse book route param', e);
       }
@@ -102,7 +101,6 @@ export default function BookDetailScreen() {
           metadata: transient.metadata,
           readingProgress: transient.readingProgress,
         });
-        setIsSaved(false);
       } else {
         // try persisted storage
         (async () => {
@@ -111,7 +109,6 @@ export default function BookDetailScreen() {
             const dto = persisted.toDTO();
             setBookDTO(dto);
             setPreparedLibraryBook(persisted.toLibraryItem());
-            setIsSaved(true);
           }
         })();
       }
@@ -165,7 +162,6 @@ export default function BookDetailScreen() {
       const persisted = await getBookById(bookDTO.id);
       if (persisted) {
         setPreparedLibraryBook(persisted.toLibraryItem());
-        setIsSaved(true);
         return persisted.toLibraryItem();
       }
       // not persisted yet — prepare transiently
@@ -241,7 +237,6 @@ export default function BookDetailScreen() {
     const libraryBook = importedBook.toLibraryItem();
     setBookDTO(importedBook.toDTO());
     setPreparedLibraryBook(libraryBook);
-    setIsSaved(false);
     return libraryBook;
   }, [bookDTO, epubUrl, gutendexBook, preparedLibraryBook, displayAuthor, coverUrl]);
 
@@ -272,7 +267,6 @@ export default function BookDetailScreen() {
         setPreparedLibraryBook(bookInstance.toLibraryItem());
         setBookDTO(bookInstance.toDTO());
         deleteTransientDto(bookInstance.id);
-        setIsSaved(true);
       }
     } catch (error) {
       console.warn('[BookDescription] Save failed:', error);
@@ -310,7 +304,6 @@ export default function BookDetailScreen() {
         routeProgress ||
         null;
 
-      setIsSaved(true);
       router.push({
         pathname: '/reader',
         params: {
@@ -346,9 +339,9 @@ export default function BookDetailScreen() {
   if (!hasBookData) {
     return (
       <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="light-content" />
+        <StatusBar barStyle="dark-content" />
         <View style={{ padding: 20 }}>
-          <Text style={{ color: '#fff' }}>No book data provided.</Text>
+          <Text style={{ color: AppPalette.text }}>No book data provided.</Text>
         </View>
       </SafeAreaView>
     );
@@ -357,12 +350,12 @@ export default function BookDetailScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <Stack.Screen options={{ headerShown: false }} />
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="dark-content" />
       
       {/* Top Navigation */}
       <View style={styles.navBar}>
         <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
-          <Ionicons name="chevron-back" size={24} color="#FFF" />
+          <Ionicons name="chevron-back" size={24} color={AppPalette.text} />
         </TouchableOpacity>
         <TouchableOpacity
           onPress={handleSave}
@@ -372,7 +365,7 @@ export default function BookDetailScreen() {
           <Ionicons
             name={preparedLibraryBook ? 'bookmark' : 'bookmark-outline'}
             size={22}
-            color="#FFF"
+            color={AppPalette.text}
           />
         </TouchableOpacity>
       </View>
@@ -381,6 +374,13 @@ export default function BookDetailScreen() {
         
         {/* Hero Section: Cover, Title, Author */}
         <View style={styles.heroSection}>
+          <View style={styles.heroBackdrop}>
+            <View style={[styles.heroBackdropBook, styles.heroBackdropBookLeft]} />
+            <View style={[styles.heroBackdropBook, styles.heroBackdropBookRight]} />
+            <View style={styles.heroBackdropSeal}>
+              <Ionicons name="bookmarks-outline" size={16} color={AppPalette.surface} />
+            </View>
+          </View>
           <View style={styles.coverShadow}>
             <Image source={{ uri: coverUrl || undefined }} style={styles.coverImage} />
           </View>
@@ -410,10 +410,10 @@ export default function BookDetailScreen() {
         <View style={styles.actionRow}>
           <TouchableOpacity style={styles.primaryButton} onPress={handleReadNow} disabled={isPreparingBook}>
             {isPreparingBook ? (
-              <ActivityIndicator color="#000" />
+              <ActivityIndicator color={AppPalette.surface} />
             ) : (
               <>
-                <Ionicons name="book" size={20} color="#000" style={{ marginRight: 8 }} />
+                <Ionicons name="book" size={20} color={AppPalette.surface} style={{ marginRight: 8 }} />
                 <Text style={styles.primaryButtonText}>{hasResumeProgress ? 'Continue Reading' : 'Read Now'}</Text>
               </>
             )}
@@ -459,7 +459,7 @@ export default function BookDetailScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0F0F0F',
+    backgroundColor: AppPalette.background,
   },
   navBar: {
     flexDirection: 'row',
@@ -471,42 +471,81 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: AppPalette.surface,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(180, 157, 123, 0.24)',
   },
   scrollContent: {
-    paddingBottom: 40,
+    paddingBottom: 56,
   },
   heroSection: {
     alignItems: 'center',
     paddingHorizontal: 24,
     marginTop: 10,
   },
+  heroBackdrop: {
+    position: 'absolute',
+    top: 10,
+    width: '100%',
+    height: 188,
+    alignItems: 'center',
+  },
+  heroBackdropBook: {
+    position: 'absolute',
+    top: 24,
+    width: 58,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 157, 123, 0.18)',
+  },
+  heroBackdropBookLeft: {
+    left: 36,
+    height: 120,
+    backgroundColor: AppPalette.accentSoft,
+  },
+  heroBackdropBookRight: {
+    right: 36,
+    height: 108,
+    backgroundColor: AppPalette.backgroundMuted,
+  },
+  heroBackdropSeal: {
+    position: 'absolute',
+    top: 0,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: AppPalette.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   coverShadow: {
-    shadowColor: '#000',
+    shadowColor: AppPalette.shadow,
     shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.5,
-    shadowRadius: 16,
-    elevation: 20,
+    shadowOpacity: 0.2,
+    shadowRadius: 24,
+    elevation: 12,
     marginBottom: 24,
   },
   coverImage: {
     width: width * 0.55,
     height: (width * 0.55) * 1.5, // Standard book aspect ratio
-    borderRadius: 12,
-    backgroundColor: '#222',
+    borderRadius: 18,
+    backgroundColor: AppPalette.surfaceStrong,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 157, 123, 0.28)',
   },
   title: {
-    color: '#FFF',
-    fontSize: 24,
+    color: AppPalette.text,
+    fontSize: 26,
     fontWeight: '800',
     textAlign: 'center',
     marginBottom: 8,
     letterSpacing: -0.5,
   },
   author: {
-    color: '#00d8b4', // Brand accent color
+    color: AppPalette.accent,
     fontSize: 16,
     fontWeight: '600',
     textAlign: 'center',
@@ -517,28 +556,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 30,
     marginHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: 16,
+    paddingVertical: 18,
+    backgroundColor: AppPalette.surface,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 157, 123, 0.24)',
   },
   statBox: {
     flex: 1,
     alignItems: 'center',
   },
   statValue: {
-    color: '#FFF',
+    color: AppPalette.text,
     fontSize: 16,
     fontWeight: '700',
     marginBottom: 4,
   },
   statLabel: {
-    color: '#888',
+    color: AppPalette.textSubtle,
     fontSize: 12,
   },
   statDivider: {
     width: 1,
     height: 30,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: AppPalette.border,
   },
   actionRow: {
     flexDirection: 'row',
@@ -548,15 +589,15 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     flex: 1,
-    backgroundColor: '#00d8b4', // High contrast accent
-    borderRadius: 12,
+    backgroundColor: AppPalette.accent,
+    borderRadius: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     height: 54,
   },
   primaryButtonText: {
-    color: '#000', // Dark text on bright button
+    color: AppPalette.surface,
     fontSize: 16,
     fontWeight: '700',
   },
@@ -573,18 +614,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   sectionTitle: {
-    color: '#FFF',
+    color: AppPalette.text,
     fontSize: 18,
     fontWeight: '700',
     marginBottom: 12,
   },
   summaryText: {
-    color: '#CCC',
+    color: AppPalette.textMuted,
     fontSize: 15,
     lineHeight: 24,
   },
   readMoreText: {
-    color: '#00d8b4',
+    color: AppPalette.accent,
     fontSize: 14,
     fontWeight: '600',
     marginTop: 8,
@@ -595,15 +636,15 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   tagBadge: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: AppPalette.surface,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: 'rgba(180, 157, 123, 0.28)',
   },
   tagText: {
-    color: '#E0E0E0',
+    color: AppPalette.text,
     fontSize: 13,
     fontWeight: '500',
   },

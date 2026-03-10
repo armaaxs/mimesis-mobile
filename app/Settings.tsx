@@ -20,6 +20,7 @@ import {
   overwriteUserSettingsLocal,
   saveUserSettings,
 } from '@/utils/userSettingsRepository';
+import { AppPalette } from '@/constants/theme';
 
 export default function Settings() {
   const router = useRouter(); // <-- 2. Initialized router
@@ -148,19 +149,33 @@ export default function Settings() {
       {/* 4. Added the Back Button to your Header Row */}
       <View style={styles.headerRow}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="chevron-back" size={28} color="#00bca3" />
+          <Ionicons name="chevron-back" size={28} color={AppPalette.accent} />
         </TouchableOpacity>
         <Text style={styles.title}>Settings</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.settingsGraphic}>
+          <View style={styles.settingsGraphicPanel}>
+            <View style={styles.settingsGraphicDial}>
+              <Ionicons name="options-outline" size={18} color={AppPalette.surface} />
+            </View>
+            <View style={styles.settingsGraphicLine} />
+            <View style={styles.settingsGraphicLineShort} />
+            <View style={styles.settingsGraphicPills}>
+              <View style={styles.settingsGraphicPill} />
+              <View style={[styles.settingsGraphicPill, styles.settingsGraphicPillAccent]} />
+              <View style={styles.settingsGraphicPill} />
+            </View>
+          </View>
+        </View>
         {/* ACCOUNT SECTION */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Account</Text>
           <View style={styles.groupBlock}>
             <View style={[styles.itemRow, styles.bottomBorder]}>
               <View style={styles.itemLeft}>
-                <Ionicons name="person" size={20} color="#00bca3" style={styles.itemIcon} />
+                <Ionicons name="person" size={20} color={AppPalette.accent} style={styles.itemIcon} />
                 <View>
                   <Text style={styles.itemText}>{authStatusLabel}</Text>
                   <Text style={styles.itemSubtext}>{authStatusValue}</Text>
@@ -168,7 +183,7 @@ export default function Settings() {
               </View>
 
               {loading ? (
-                <ActivityIndicator color="#00bca3" />
+                <ActivityIndicator color={AppPalette.accent} />
               ) : (
                 <View style={styles.statusPill}>
                   <Text style={styles.statusPillText}>{isAuthenticated ? 'SIGNED IN' : 'GUEST'}</Text>
@@ -184,13 +199,13 @@ export default function Settings() {
                   disabled={authActionLoading !== null}
                 >
                   <View style={styles.itemLeft}>
-                    <Ionicons name="logo-google" size={20} color="#00bca3" style={styles.itemIcon} />
+                    <Ionicons name="logo-google" size={20} color={AppPalette.accent} style={styles.itemIcon} />
                     <Text style={styles.itemText}>Continue with Google</Text>
                   </View>
                   {authActionLoading === 'google' ? (
-                    <ActivityIndicator color="#00bca3" />
+                    <ActivityIndicator color={AppPalette.accent} />
                   ) : (
-                    <Ionicons name="chevron-forward" size={18} color="#666666" />
+                    <Ionicons name="chevron-forward" size={18} color={AppPalette.textSubtle} />
                   )}
                 </TouchableOpacity>
 
@@ -200,13 +215,13 @@ export default function Settings() {
                   disabled={authActionLoading !== null}
                 >
                   <View style={styles.itemLeft}>
-                    <Ionicons name="logo-apple" size={20} color="#00bca3" style={styles.itemIcon} />
+                    <Ionicons name="logo-apple" size={20} color={AppPalette.accent} style={styles.itemIcon} />
                     <Text style={styles.itemText}>Continue with Apple</Text>
                   </View>
                   {authActionLoading === 'apple' ? (
-                    <ActivityIndicator color="#00bca3" />
+                    <ActivityIndicator color={AppPalette.accent} />
                   ) : (
-                    <Ionicons name="chevron-forward" size={18} color="#666666" />
+                    <Ionicons name="chevron-forward" size={18} color={AppPalette.textSubtle} />
                   )}
                 </TouchableOpacity>
               </>
@@ -220,22 +235,22 @@ export default function Settings() {
           <View style={styles.groupBlock}>
             <TouchableOpacity style={[styles.itemRow, styles.bottomBorder]}>
               <View style={styles.itemLeft}>
-                <Ionicons name="text" size={20} color="#00bca3" style={styles.itemIcon} />
+                <Ionicons name="text" size={20} color={AppPalette.accent} style={styles.itemIcon} />
                 <Text style={styles.itemText}>Typography & Font Size</Text>
               </View>
-              <Ionicons name="chevron-forward" size={18} color="#666666" />
+              <Ionicons name="chevron-forward" size={18} color={AppPalette.textSubtle} />
             </TouchableOpacity>
 
             <View style={styles.itemRow}>
               <View style={styles.itemLeft}>
-                <Ionicons name="moon" size={20} color="#00bca3" style={styles.itemIcon} />
+                <Ionicons name="moon" size={20} color={AppPalette.accent} style={styles.itemIcon} />
                 <Text style={styles.itemText}>True AMOLED Black</Text>
               </View>
               <Switch
                 value={isAmoledDark}
                 onValueChange={handleToggleAmoled}
-                trackColor={{ false: '#333333', true: '#00bca3' }}
-                thumbColor={'#ffffff'}
+                trackColor={{ false: AppPalette.border, true: AppPalette.accent }}
+                thumbColor={AppPalette.surface}
               />
             </View>
           </View>
@@ -247,20 +262,20 @@ export default function Settings() {
           <View style={styles.groupBlock}>
             <View style={[styles.itemRow, styles.bottomBorder]}>
               <View style={styles.itemLeft}>
-                <Ionicons name="wifi" size={20} color="#00bca3" style={styles.itemIcon} />
+                <Ionicons name="wifi" size={20} color={AppPalette.accent} style={styles.itemIcon} />
                 <Text style={styles.itemText}>Download over Wi-Fi Only</Text>
               </View>
               <Switch
                 value={wifiOnly}
                 onValueChange={handleToggleWifiOnly}
-                trackColor={{ false: '#333333', true: '#00bca3' }}
-                thumbColor={'#ffffff'}
+                trackColor={{ false: AppPalette.border, true: AppPalette.accent }}
+                thumbColor={AppPalette.surface}
               />
             </View>
 
             <TouchableOpacity style={styles.itemRow}>
               <View style={styles.itemLeft}>
-                <Ionicons name="trash" size={20} color="#00ffb7" style={styles.itemIcon} />
+                <Ionicons name="trash" size={20} color={AppPalette.danger} style={styles.itemIcon} />
                 <Text style={styles.itemText}>Clear Image Cache</Text>
               </View>
               <Text style={styles.itemValue}>142 MB</Text>
@@ -274,7 +289,7 @@ export default function Settings() {
           <View style={styles.groupBlock}>
             <TouchableOpacity style={[styles.itemRow, styles.bottomBorder]}>
               <View style={styles.itemLeft}>
-                <Ionicons name="information-circle" size={20} color="#00bca3" style={styles.itemIcon} />
+                <Ionicons name="information-circle" size={20} color={AppPalette.accent} style={styles.itemIcon} />
                 <Text style={styles.itemText}>App Info</Text>
               </View>
               <Text style={styles.itemValue}>v1.0.0</Text>
@@ -282,10 +297,10 @@ export default function Settings() {
             
             <TouchableOpacity style={styles.itemRow} onPress={handleLogout}>
               <View style={styles.itemLeft}>
-                <Ionicons name="log-out" size={20} color="#666666" style={styles.itemIcon} />
+                <Ionicons name="log-out" size={20} color={AppPalette.textSubtle} style={styles.itemIcon} />
                 <Text style={styles.itemText}>{isAuthenticated ? 'Log Out' : 'Log Out (inactive)'}</Text>
               </View>
-              {authActionLoading === 'logout' && <ActivityIndicator color="#00bca3" />}
+              {authActionLoading === 'logout' && <ActivityIndicator color={AppPalette.accent} />}
             </TouchableOpacity>
           </View>
         </View>
@@ -297,24 +312,27 @@ export default function Settings() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: AppPalette.background,
   },
   headerRow: {
-    marginTop: 20,
+    marginTop: 12,
     marginBottom: 20,
-    paddingHorizontal: 20, // Slightly reduced to make room for the button
+    paddingHorizontal: 20,
     flexDirection: 'row',
     alignItems: 'center',
   },
-  // 5. Added style for the back button
   backButton: {
     marginRight: 12,
-    marginLeft: -4, // Optically aligns the chevron with the edge of the screen below
-    padding: 4,     // Makes the invisible touch target larger for thumbs
+    marginLeft: -4,
+    padding: 8,
+    borderRadius: 14,
+    backgroundColor: AppPalette.surface,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 157, 123, 0.24)',
   },
   title: {
     fontSize: 34,
-    color: '#ffffff',
+    color: AppPalette.text,
     fontFamily: 'Georgia',
     fontWeight: '700',
     letterSpacing: -0.5,
@@ -323,11 +341,64 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 60,
   },
+  settingsGraphic: {
+    marginBottom: 28,
+  },
+  settingsGraphicPanel: {
+    backgroundColor: AppPalette.surface,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 157, 123, 0.24)',
+    padding: 18,
+    shadowColor: AppPalette.shadow,
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    elevation: 2,
+  },
+  settingsGraphicDial: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: AppPalette.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  settingsGraphicLine: {
+    width: '58%',
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(36, 28, 24, 0.08)',
+    marginBottom: 10,
+  },
+  settingsGraphicLineShort: {
+    width: '34%',
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(47, 107, 98, 0.14)',
+    marginBottom: 18,
+  },
+  settingsGraphicPills: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  settingsGraphicPill: {
+    width: 48,
+    height: 32,
+    borderRadius: 999,
+    backgroundColor: AppPalette.surfaceStrong,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 157, 123, 0.18)',
+  },
+  settingsGraphicPillAccent: {
+    backgroundColor: AppPalette.accentSoft,
+  },
   section: {
     marginBottom: 28,
   },
   sectionTitle: {
-    color: '#00bca3',
+    color: AppPalette.accent,
     fontSize: 13,
     fontWeight: '800',
     marginBottom: 8,
@@ -337,9 +408,16 @@ const styles = StyleSheet.create({
     fontFamily: 'Georgia',
   },
   groupBlock: {
-    backgroundColor: '#111111',
-    borderRadius: 16,
+    backgroundColor: AppPalette.surface,
+    borderRadius: 22,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(180, 157, 123, 0.24)',
+    shadowColor: AppPalette.shadow,
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 3,
   },
   itemRow: {
     flexDirection: 'row',
@@ -351,7 +429,7 @@ const styles = StyleSheet.create({
   },
   bottomBorder: {
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#222222',
+    borderBottomColor: AppPalette.border,
   },
   itemLeft: {
     flexDirection: 'row',
@@ -363,19 +441,19 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   itemText: {
-    color: '#F0F0F0',
+    color: AppPalette.text,
     fontSize: 16,
     fontFamily: 'Georgia',
     fontWeight: '500',
   },
   itemValue: {
-    color: '#888888',
+    color: AppPalette.textSubtle,
     fontSize: 14,
     fontFamily: 'Georgia',
   },
   itemSubtext: {
     marginTop: 2,
-    color: '#888888',
+    color: AppPalette.textSubtle,
     fontSize: 12,
     fontFamily: 'Georgia',
   },
@@ -383,10 +461,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
-    backgroundColor: '#0e2f2a',
+    backgroundColor: AppPalette.accentSoft,
   },
   statusPillText: {
-    color: '#00bca3',
+    color: AppPalette.accentStrong,
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.5,

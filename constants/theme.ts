@@ -5,24 +5,42 @@
 
 import { Platform } from 'react-native';
 
-const tintColorLight = '#00C2A8';
-const tintColorDark = '#00C2A8';
+const tintColorLight = '#2F6B62';
+const tintColorDark = '#2F6B62';
+
+export const AppPalette = {
+  background: '#F4EEDF',
+  backgroundMuted: '#E8DDC7',
+  surface: '#FBF8F1',
+  surfaceStrong: '#F0E7D7',
+  surfaceInverse: '#201A17',
+  border: '#D9C9AF',
+  borderStrong: '#B49D7B',
+  text: '#241C18',
+  textMuted: '#6E6255',
+  textSubtle: '#8D7E6C',
+  accent: '#2F6B62',
+  accentSoft: '#D6E2DD',
+  accentStrong: '#214B45',
+  danger: '#A44A3F',
+  shadow: '#9B835C',
+};
 
 export const Colors = {
   light: {
-    text: '#E9F6F4',
-    background: '#0B1113',
+    text: AppPalette.text,
+    background: AppPalette.background,
     tint: tintColorLight,
-    icon: '#6E8481',
-    tabIconDefault: '#6E8481',
+    icon: AppPalette.textSubtle,
+    tabIconDefault: AppPalette.textSubtle,
     tabIconSelected: tintColorLight,
   },
   dark: {
-    text: '#E9F6F4',
-    background: '#0B1113',
+    text: AppPalette.text,
+    background: AppPalette.background,
     tint: tintColorDark,
-    icon: '#6E8481',
-    tabIconDefault: '#6E8481',
+    icon: AppPalette.textSubtle,
+    tabIconDefault: AppPalette.textSubtle,
     tabIconSelected: tintColorDark,
   },
 };

@@ -26,6 +26,7 @@ export function chunkText(text: string, maxChars: number): string[] {
   const findPunctuationBoundary = (startIndex: number, preferredEnd: number) => {
     const searchEnd = Math.min(normalizedText.length - 1, preferredEnd);
     let bestPeriod = -1;
+    let bestStrongPause = -1;
     let bestComma = -1;
     let bestColon = -1;
 
@@ -40,6 +41,11 @@ export function chunkText(text: string, maxChars: number): string[] {
         continue;
       }
 
+      if ((char === '!' || char === '?' || char === ';') && bestStrongPause < 0) {
+        bestStrongPause = index;
+        continue;
+      }
+
       if (char === ',' && bestComma < 0) {
         bestComma = index;
         continue;
@@ -50,7 +56,13 @@ export function chunkText(text: string, maxChars: number): string[] {
       }
     }
 
-    return bestPeriod >= 0 ? bestPeriod : bestComma >= 0 ? bestComma : bestColon;
+    return bestPeriod >= 0
+      ? bestPeriod
+      : bestStrongPause >= 0
+        ? bestStrongPause
+        : bestComma >= 0
+          ? bestComma
+          : bestColon;
   };
 
   const findWhitespaceBoundary = (startIndex: number, preferredEnd: number) => {
@@ -66,7 +78,7 @@ export function chunkText(text: string, maxChars: number): string[] {
   const findForwardBoundary = (searchFrom: number, searchTo: number) => {
     for (let index = searchFrom; index <= searchTo; index += 1) {
       const char = normalizedText[index];
-      if (char === '.' || char === ',' || char === ':' || /\s/.test(char)) {
+      if (char === '.' || char === ',' || char === ':' || char === '!' || char === '?' || char === ';' || /\s/.test(char)) {
         return index;
       }
     }

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, Text, View, Image, TouchableOpacity, Dimensions, ViewStyle, ImageStyle, TextStyle } from 'react-native';
+import { AppPalette } from '@/constants/theme';
 
 const { width } = Dimensions.get('window');
 const COLUMN_WIDTH = (width - 60) / 2;
@@ -60,18 +61,20 @@ const styles = StyleSheet.create({
   coverWrapper: {
     width: '100%',
     aspectRatio: 2/3,
-    backgroundColor: '#111',
-    borderRadius: 2,
+    backgroundColor: AppPalette.surfaceStrong,
+    borderRadius: 18,
     position: 'relative',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-    elevation: 8,
+    shadowColor: AppPalette.shadow,
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
+    elevation: 7,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 157, 123, 0.28)',
   } as ViewStyle,
   cover: {
     flex: 1,
-    borderRadius: 2,
+    borderRadius: 18,
   } as ImageStyle,
   deleteButton: {
     position: 'absolute',
@@ -83,36 +86,37 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(190, 18, 60, 0.95)',
+    backgroundColor: AppPalette.danger,
   } as ViewStyle,
   placeholder: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#1A1A1A',
+    backgroundColor: AppPalette.surfaceStrong,
   } as ViewStyle,
   placeholderText: {
-    color: '#333',
-    fontSize: 32,
+    color: AppPalette.borderStrong,
+    fontSize: 40,
     fontWeight: '700',
   } as TextStyle,
   textContainer: {
-    marginTop: 14,
+    marginTop: 16,
+    paddingHorizontal: 2,
   } as ViewStyle,
   title: {
     fontFamily: 'Georgia',
     fontSize: 18,
     fontWeight: '700',
-    color: '#FFF',
-    lineHeight: 22,
+    color: AppPalette.text,
+    lineHeight: 24,
     letterSpacing: -0.2,
   } as TextStyle,
   author: {
     fontSize: 12,
-    color: '#666',
-    marginTop: 4,
+    color: AppPalette.textSubtle,
+    marginTop: 6,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    fontWeight: '500',
+    letterSpacing: 0.8,
+    fontWeight: '600',
   } as TextStyle,
 });

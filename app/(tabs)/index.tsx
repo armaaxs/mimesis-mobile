@@ -12,6 +12,7 @@ import { Book } from '@/models/Book';
 import { reconcileFromSupabase } from '@/services/syncService';
 import { deleteBook, listBookCatalog, saveBook } from '@/utils/bookRepository';
 import { extractEpubImportPayload } from '@/utils/epubparser';
+import { AppPalette } from '@/constants/theme';
 
 const dedupeBooks = (items: LibraryBook[]): LibraryBook[] => {
   const seen = new Set<string>();
@@ -45,17 +46,27 @@ export default function LibraryScreen() {
     <View style={styles.header}>
       <View style={styles.topRow}>  
         <Text style={styles.date}>Mimesis-82</Text>
-      <TouchableOpacity
+        <TouchableOpacity
           style={styles.settingsButton}
           onPress={() => router.push('/Settings')}
           accessibilityLabel="Settings"
         >
-          <Ionicons name="settings" size={28} color="#cbd5d1" />
+          <Ionicons name="settings" size={24} color={AppPalette.accentStrong} />
         </TouchableOpacity>
       </View>
       <View style={styles.headingRow}>
         <Text style={styles.greeting}>Your Library</Text>
-
+      </View>
+      <View style={styles.libraryGraphic}>
+        <View style={styles.libraryGraphicShelf}>
+          <View style={[styles.libraryGraphicBook, styles.libraryGraphicBookTall]} />
+          <View style={[styles.libraryGraphicBook, styles.libraryGraphicBookAccent]} />
+          <View style={[styles.libraryGraphicBook, styles.libraryGraphicBookWide]} />
+          <View style={styles.libraryGraphicMedallion}>
+            <Ionicons name="bookmark-outline" size={18} color={AppPalette.surface} />
+          </View>
+        </View>
+        <Text style={styles.libraryGraphicCaption}>A quieter shelf for the books you keep close.</Text>
       </View>
       <View style={styles.divider} />
     </View>
@@ -205,31 +216,32 @@ export default function LibraryScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: AppPalette.background,
   } as ViewStyle,
   header: {
-    marginTop: 20,
-    marginBottom: 30,
+    marginTop: 10,
+    marginBottom: 28,
     paddingHorizontal: 4,
   } as ViewStyle,
   date: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '800',
-    color: '#00bca3',
-    letterSpacing: 1.5,
+    color: AppPalette.accent,
+    letterSpacing: 1.8,
+    textTransform: 'uppercase',
   } as TextStyle,
   greeting: {
     fontFamily: 'Georgia', // Native fallback for Charter
-    fontSize: 48,
+    fontSize: 44,
     fontWeight: '700',
-    color: '#ffffff',
-    marginTop: 8,
-    letterSpacing: -1.5,
+    color: AppPalette.text,
+    marginTop: 10,
+    letterSpacing: -1.2,
   } as TextStyle,
   divider: {
     height: 1,
-    backgroundColor: '#2f2f2f',
-    marginTop: 24,
+    backgroundColor: AppPalette.border,
+    marginTop: 22,
     width: '100%',
   } as ViewStyle,
   headingRow: {
@@ -245,14 +257,80 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   } as ViewStyle,
   settingsButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
+    backgroundColor: AppPalette.surface,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 157, 123, 0.28)',
+    shadowColor: AppPalette.shadow,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 2,
   } as ViewStyle,
+  libraryGraphic: {
+    marginTop: 22,
+    backgroundColor: AppPalette.surface,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 157, 123, 0.24)',
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+  } as ViewStyle,
+  libraryGraphicShelf: {
+    minHeight: 96,
+    borderRadius: 18,
+    backgroundColor: AppPalette.surfaceStrong,
+    overflow: 'hidden',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 18,
+    paddingBottom: 18,
+  } as ViewStyle,
+  libraryGraphicBook: {
+    position: 'absolute',
+    bottom: 18,
+    width: 28,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 157, 123, 0.22)',
+    backgroundColor: AppPalette.background,
+  } as ViewStyle,
+  libraryGraphicBookTall: {
+    left: 22,
+    height: 58,
+  } as ViewStyle,
+  libraryGraphicBookAccent: {
+    left: 58,
+    height: 72,
+    backgroundColor: AppPalette.accentSoft,
+  } as ViewStyle,
+  libraryGraphicBookWide: {
+    left: 94,
+    width: 34,
+    height: 48,
+  } as ViewStyle,
+  libraryGraphicMedallion: {
+    position: 'absolute',
+    right: 20,
+    top: 18,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: AppPalette.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  libraryGraphicCaption: {
+    marginTop: 12,
+    color: AppPalette.textMuted,
+    fontSize: 14,
+    lineHeight: 21,
+  } as TextStyle,
   // settingsText removed, replaced by icon
   listPadding: {
     paddingHorizontal: 20,
-    paddingBottom: 40,
+    paddingBottom: 120,
   } as ViewStyle,
   columnWrapper: {
     justifyContent: 'space-between',

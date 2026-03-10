@@ -9,7 +9,6 @@ import {
   DEFAULT_TTS_SAMPLE_RATE,
 } from '../services/tts/config';
 import { chunkText } from '../utils/chunkText';
-import { DeepPhonemizer } from 'expo-deep-phonemizer';
 type PlaybackResult = 'ended' | 'stopped';
 
 type PlayerState = {
@@ -38,6 +37,7 @@ export type UseTTSQueuePlayerOptions = {
   downloadFileBaseName?: string;
   chunkSize?: number;
   chunkPauseMs?: number;
+  playbackRate?: number;
   playbackPrefetchAheadChunks?: number;
   playbackKeepBehindChunks?: number;
   queueTargetMemoryMB?: number;
@@ -88,6 +88,7 @@ export function useTTSQueuePlayer({
   downloadFileBaseName,
   chunkSize = 200,
   chunkPauseMs = 140,
+  playbackRate = 1,
   playbackPrefetchAheadChunks = 6,
   playbackKeepBehindChunks = 2,
   queueTargetMemoryMB = 96,
@@ -206,7 +207,7 @@ export function useTTSQueuePlayer({
       }
       downloadChunkAudioCacheRef.current.delete(oldestKey);
     }
-  }, []);
+  }, [DOWNLOAD_CACHE_MAX_BYTES]);
 
   const toSafeFileName = useCallback((value: string) => {
     return value
@@ -574,6 +575,9 @@ export function useTTSQueuePlayer({
 
         const source = context.createBufferSource();
         source.buffer = buffer;
+        if ((source as any).playbackRate?.value !== undefined) {
+          (source as any).playbackRate.value = playbackRate;
+        }
         source.connect(context.destination);
         runtimeRef.current.currentSource = source;
 
@@ -601,7 +605,7 @@ export function useTTSQueuePlayer({
         resolveIfNeeded('stopped');
       }
     });
-  }, []);
+  }, [playbackRate]);
 
   const generateQueue = useCallback(async (sessionId: number) => {
     const runtime = runtimeRef.current;

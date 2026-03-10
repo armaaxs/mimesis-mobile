@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } fr
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
+import { AppPalette } from '@/constants/theme';
 import { useSupabaseAuth } from '@/hooks/use-supabase-auth';
 import { isSupabaseConfigured } from '@/services/supabaseAuth';
 
@@ -36,8 +37,19 @@ export default function AuthScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
+        <View style={styles.eyebrowWrap}>
+          <Text style={styles.eyebrow}>Your reading room</Text>
+        </View>
         <Text style={styles.title}>Welcome to Mimesis-82</Text>
         <Text style={styles.subtitle}>Sign in to access your library and synced reading progress.</Text>
+        <View style={styles.authGraphic}>
+          <View style={[styles.authBook, styles.authBookLeft]} />
+          <View style={[styles.authBook, styles.authBookCenter]} />
+          <View style={[styles.authBook, styles.authBookRight]} />
+          <View style={styles.authSeal}>
+            <Ionicons name="moon-outline" size={18} color={AppPalette.surface} />
+          </View>
+        </View>
 
         <TouchableOpacity
           style={[styles.authButton, styles.buttonDivider]}
@@ -45,10 +57,10 @@ export default function AuthScreen() {
           disabled={actionLoading !== null}
         >
           <View style={styles.buttonLeft}>
-            <Ionicons name="logo-google" size={20} color="#00bca3" style={styles.buttonIcon} />
+            <Ionicons name="logo-google" size={20} color={AppPalette.accent} style={styles.buttonIcon} />
             <Text style={styles.buttonText}>Continue with Google</Text>
           </View>
-          {actionLoading === 'google' ? <ActivityIndicator color="#00bca3" /> : <Ionicons name="chevron-forward" size={18} color="#666666" />}
+          {actionLoading === 'google' ? <ActivityIndicator color={AppPalette.accent} /> : <Ionicons name="chevron-forward" size={18} color={AppPalette.textSubtle} />}
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -57,10 +69,10 @@ export default function AuthScreen() {
           disabled={actionLoading !== null}
         >
           <View style={styles.buttonLeft}>
-            <Ionicons name="logo-apple" size={20} color="#00bca3" style={styles.buttonIcon} />
+            <Ionicons name="logo-apple" size={20} color={AppPalette.accent} style={styles.buttonIcon} />
             <Text style={styles.buttonText}>Continue with Apple</Text>
           </View>
-          {actionLoading === 'apple' ? <ActivityIndicator color="#00bca3" /> : <Ionicons name="chevron-forward" size={18} color="#666666" />}
+          {actionLoading === 'apple' ? <ActivityIndicator color={AppPalette.accent} /> : <Ionicons name="chevron-forward" size={18} color={AppPalette.textSubtle} />}
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -70,34 +82,103 @@ export default function AuthScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: AppPalette.background,
   },
   content: {
     flex: 1,
     paddingHorizontal: 24,
     justifyContent: 'center',
   },
+  eyebrowWrap: {
+    alignSelf: 'flex-start',
+    backgroundColor: AppPalette.accentSoft,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    marginBottom: 20,
+  },
+  eyebrow: {
+    color: AppPalette.accentStrong,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
   title: {
-    color: '#ffffff',
+    color: AppPalette.text,
     fontSize: 32,
     fontFamily: 'Georgia',
     fontWeight: '700',
     marginBottom: 12,
   },
   subtitle: {
-    color: '#B5B5B5',
+    color: AppPalette.textMuted,
     fontSize: 15,
     fontFamily: 'Georgia',
-    marginBottom: 28,
+    marginBottom: 32,
+    lineHeight: 23,
+  },
+  authGraphic: {
+    height: 136,
+    borderRadius: 28,
+    backgroundColor: AppPalette.surface,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 157, 123, 0.28)',
+    marginBottom: 24,
+    overflow: 'hidden',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 24,
+    paddingBottom: 20,
+  },
+  authBook: {
+    position: 'absolute',
+    bottom: 20,
+    width: 42,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 157, 123, 0.24)',
+  },
+  authBookLeft: {
+    left: 28,
+    height: 64,
+    backgroundColor: AppPalette.backgroundMuted,
+  },
+  authBookCenter: {
+    left: 78,
+    height: 82,
+    backgroundColor: AppPalette.accentSoft,
+  },
+  authBookRight: {
+    left: 128,
+    height: 56,
+    backgroundColor: AppPalette.background,
+  },
+  authSeal: {
+    position: 'absolute',
+    right: 22,
+    top: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: AppPalette.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   authButton: {
-    backgroundColor: '#111111',
-    borderRadius: 14,
-    minHeight: 58,
+    backgroundColor: AppPalette.surface,
+    borderRadius: 18,
+    minHeight: 64,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 157, 123, 0.28)',
+    shadowColor: AppPalette.shadow,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    elevation: 3,
   },
   buttonDivider: {
     marginBottom: 12,
@@ -110,7 +191,7 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   buttonText: {
-    color: '#F0F0F0',
+    color: AppPalette.text,
     fontSize: 16,
     fontFamily: 'Georgia',
     fontWeight: '500',

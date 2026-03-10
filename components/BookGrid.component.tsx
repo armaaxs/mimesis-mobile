@@ -4,12 +4,10 @@ import {
   View,
   ActivityIndicator,
   StyleSheet,
-  Dimensions,
   ViewStyle,
 } from 'react-native';
 import { BookCard, Book } from './BookCard.components';
-
-const { width } = Dimensions.get('window');
+import { AppPalette } from '@/constants/theme';
 
 interface BookGridProps {
   books: Book[];
@@ -32,7 +30,7 @@ export const BookGrid: React.FC<BookGridProps> = ({
     if (!isLoadingMore) return null;
     return (
       <View style={styles.footerLoader}>
-        <ActivityIndicator size="small" color="#00bca3" />
+        <ActivityIndicator size="small" color={AppPalette.accent} />
       </View>
     );
   };
@@ -63,7 +61,7 @@ const styles = StyleSheet.create({
   },
   listPadding: {
     paddingHorizontal: 20,
-    paddingBottom: 40,
+    paddingBottom: 120,
   },
   footerLoader: {
     paddingVertical: 24,

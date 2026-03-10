@@ -5,6 +5,7 @@ import { type Href, Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 
+import { AppPalette } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useSupabaseAuth } from '@/hooks/use-supabase-auth';
 
@@ -41,7 +42,7 @@ export default function RootLayout() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DarkTheme}>
       {loading ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator color="#00bca3" size="large" />
+          <ActivityIndicator color={AppPalette.accent} size="large" />
         </View>
       ) : (
         <Stack>
@@ -60,7 +61,7 @@ export default function RootLayout() {
 const styles = StyleSheet.create({
   loadingContainer: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: AppPalette.background,
     alignItems: 'center',
     justifyContent: 'center',
   },

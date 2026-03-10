@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { PanResponder, StyleSheet, Text, View } from 'react-native';
+import { PanResponder, StyleSheet, View } from 'react-native';
 
 type ChunkSeekerProps = {
   progress: number;
@@ -18,8 +18,8 @@ const KNOB_SIZE = 14;
 
 export default function ChunkSeeker({
   progress,
-  currentChunk,
-  totalChunks,
+  currentChunk: _currentChunk,
+  totalChunks: _totalChunks,
   disabled = false,
   onSeek,
 }: ChunkSeekerProps) {
@@ -60,11 +60,6 @@ export default function ChunkSeeker({
 
   return (
     <View style={[styles.container, disabled && styles.disabled]}>
-      <View style={styles.row}>
-        <Text style={styles.text}>{totalChunks > 0 ? `${currentChunk + 1}` : '0'}</Text>
-        <Text style={styles.text}>{totalChunks}</Text>
-      </View>
-
       <View
         style={styles.track}
         onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
@@ -92,20 +87,10 @@ const styles = StyleSheet.create({
   container: {
     width: '100%',
     paddingHorizontal: 16,
-    paddingTop: 8,
+    paddingTop: 4,
   },
   disabled: {
     opacity: 0.45,
-  },
-  row: {
-    marginBottom: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  text: {
-    color: '#E0E0E0',
-    fontSize: 11,
   },
   track: {
     height: TRACK_HEIGHT,
