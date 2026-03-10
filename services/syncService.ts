@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Book, type BookDTO, type BookReadingProgressDTO } from '@/models/Book';
 import { isSupabaseConfigured, supabase } from '@/services/supabaseAuth';
 import { getBookById, saveBook, saveBookReadingProgress } from '@/utils/bookRepository';
+import { DEFAULT_GUTENDEX_CATEGORY_IDS, sanitizeGutendexCategoryIds } from '@/utils/gutendex';
 
 const SYNC_QUEUE_KEY = 'mimesis.sync.queue.v1';
 
@@ -56,6 +57,10 @@ type SyncOperation =
         amoledDark: boolean;
         wifiOnlyDownloads: boolean;
         fontScale: number;
+        profileName: string;
+        birthdate: string;
+        favoriteCategoryIds: string[];
+        onboardingCompletedAt: string | null;
       };
     }
   | {
@@ -76,6 +81,10 @@ export type RemoteUserSettings = {
   amoledDark: boolean;
   wifiOnlyDownloads: boolean;
   fontScale: number;
+  profileName: string;
+  birthdate: string;
+  favoriteCategoryIds: string[];
+  onboardingCompletedAt: string | null;
 };
 
 const makeOperationId = () => `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
@@ -179,6 +188,10 @@ export const enqueueUserSettingsSync = async (settings: {
   amoledDark: boolean;
   wifiOnlyDownloads: boolean;
   fontScale: number;
+  profileName: string;
+  birthdate: string;
+  favoriteCategoryIds: string[];
+  onboardingCompletedAt: string | null;
 }) => {
   const operation: SyncOperation = {
     id: makeOperationId(),
@@ -189,6 +202,13 @@ export const enqueueUserSettingsSync = async (settings: {
       amoledDark: settings.amoledDark,
       wifiOnlyDownloads: settings.wifiOnlyDownloads,
       fontScale: settings.fontScale,
+      profileName: settings.profileName,
+      birthdate: settings.birthdate,
+      favoriteCategoryIds: sanitizeGutendexCategoryIds(
+        settings.favoriteCategoryIds,
+        DEFAULT_GUTENDEX_CATEGORY_IDS.slice(0, 3),
+      ),
+      onboardingCompletedAt: settings.onboardingCompletedAt,
     },
   };
 
@@ -327,6 +347,10 @@ const applyOperation = async (operation: SyncOperation, userId: string) => {
       amoled_dark: operation.payload.amoledDark,
       wifi_only_downloads: operation.payload.wifiOnlyDownloads,
       font_scale: operation.payload.fontScale,
+      display_name: operation.payload.profileName || null,
+      birthdate: operation.payload.birthdate || null,
+      favorite_category_ids: operation.payload.favoriteCategoryIds,
+      onboarding_completed_at: operation.payload.onboardingCompletedAt,
     },
     {
       onConflict: 'user_id',
@@ -407,7 +431,7 @@ export const pullUserSettingsFromSupabase = async (): Promise<RemoteUserSettings
 
   const { data, error } = await supabase
     .from('user_settings')
-    .select('amoled_dark,wifi_only_downloads,font_scale')
+    .select('amoled_dark,wifi_only_downloads,font_scale,display_name,birthdate,favorite_category_ids,onboarding_completed_at')
     .eq('user_id', userId)
     .maybeSingle();
 
@@ -424,6 +448,14 @@ export const pullUserSettingsFromSupabase = async (): Promise<RemoteUserSettings
     amoledDark: Boolean(data.amoled_dark),
     wifiOnlyDownloads: Boolean(data.wifi_only_downloads),
     fontScale: typeof data.font_scale === 'number' ? data.font_scale : 1,
+    profileName: typeof data.display_name === 'string' ? data.display_name : '',
+    birthdate: typeof data.birthdate === 'string' ? data.birthdate : '',
+    favoriteCategoryIds: sanitizeGutendexCategoryIds(
+      data.favorite_category_ids,
+      DEFAULT_GUTENDEX_CATEGORY_IDS.slice(0, 3),
+    ),
+    onboardingCompletedAt:
+      typeof data.onboarding_completed_at === 'string' ? data.onboarding_completed_at : null,
   };
 };
 
