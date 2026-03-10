@@ -9,7 +9,7 @@ import {
   DEFAULT_TTS_SAMPLE_RATE,
 } from '../services/tts/config';
 import { chunkText } from '../utils/chunkText';
-
+import { DeepPhonemizer } from 'expo-deep-phonemizer';
 type PlaybackResult = 'ended' | 'stopped';
 
 type PlayerState = {
