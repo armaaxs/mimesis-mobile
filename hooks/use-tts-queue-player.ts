@@ -793,6 +793,8 @@ export function useTTSQueuePlayer({
             break;
           }
 
+          // Drop the chunk we just finished playing instead of retaining it behind the playhead.
+          delete runtimeRef.current.audioQueue[chunkIndex];
           runtimeRef.current.currentChunkIndex += 1;
           setCurrentChunkIndex(runtimeRef.current.currentChunkIndex);
           pruneAudioQueueWindow(sessionId);

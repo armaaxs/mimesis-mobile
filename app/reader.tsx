@@ -403,8 +403,8 @@ export default function Reader() {
     text: rawChapterText,
     downloadFileBaseName,
     chunkSize: 200,
-    playbackPrefetchAheadChunks: 6,
-    playbackKeepBehindChunks: 2,
+    playbackPrefetchAheadChunks: 2,
+    playbackKeepBehindChunks: 0,
     queueTargetMemoryMB: 32,
   });
 
