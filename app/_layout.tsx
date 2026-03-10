@@ -28,9 +28,32 @@ export default function RootLayout() {
 
   useEffect(() => {
     let active = true;
-    setOnboardingLoading(true);
 
     const hydrateOnboarding = async () => {
+      const onboardingState = await getOnboardingState();
+      if (!active) {
+        return;
+      }
+
+      setHasCompletedOnboarding(onboardingState.completed);
+      setOnboardingLoading(false);
+    };
+
+    void hydrateOnboarding();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (routeGroup !== 'auth' && routeGroup !== 'onboarding' && routeGroup !== undefined) {
+      return;
+    }
+
+    let active = true;
+
+    const refreshOnboardingCompletion = async () => {
       const onboardingState = await getOnboardingState();
       if (!active) {
         return;
@@ -39,10 +62,9 @@ export default function RootLayout() {
       setHasCompletedOnboarding((previous) =>
         previous === onboardingState.completed ? previous : onboardingState.completed,
       );
-      setOnboardingLoading(false);
     };
 
-    void hydrateOnboarding();
+    void refreshOnboardingCompletion();
 
     return () => {
       active = false;
