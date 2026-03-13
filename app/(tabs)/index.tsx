@@ -10,6 +10,7 @@ import { File } from 'expo-file-system';
 import JSZip from 'jszip';
 import { Book } from '@/models/Book';
 import { reconcileFromSupabase } from '@/services/syncService';
+import { addWithNitro, isNitroAdderAvailable } from '@/services/nitroAdder';
 import { deleteBook, listBookCatalog, saveBook } from '@/utils/bookRepository';
 import { extractEpubImportPayload } from '@/utils/epubparser';
 import { AppPalette } from '@/constants/theme';
@@ -41,6 +42,8 @@ export default function LibraryScreen() {
   const router = useRouter();
   const [books, setBooks] = React.useState<LibraryBook[]>([]);
   const [deleteTargetBookId, setDeleteTargetBookId] = React.useState<string | null>(null);
+  const nitroAvailable = React.useMemo(() => isNitroAdderAvailable(), []);
+  const nitroSum = React.useMemo(() => addWithNitro(7, 5), []);
   
   const renderHeader = () => (
     <View style={styles.header}>
@@ -67,6 +70,15 @@ export default function LibraryScreen() {
           </View>
         </View>
         <Text style={styles.libraryGraphicCaption}>A quieter shelf for the books you keep close.</Text>
+      </View>
+      <View style={styles.nitroCard}>
+        <Text style={styles.nitroEyebrow}>Nitro module</Text>
+        <Text style={styles.nitroTitle}>7 + 5 = {nitroSum}</Text>
+        <Text style={styles.nitroCopy}>
+          {nitroAvailable
+            ? 'Computed through the native ReactNativeAdder Nitro module.'
+            : 'JS fallback is active until the native app is rebuilt.'}
+        </Text>
       </View>
       <View style={styles.divider} />
     </View>
@@ -326,6 +338,34 @@ const styles = StyleSheet.create({
     color: AppPalette.textMuted,
     fontSize: 14,
     lineHeight: 21,
+  } as TextStyle,
+  nitroCard: {
+    marginTop: 18,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    borderRadius: 20,
+    backgroundColor: AppPalette.surface,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 157, 123, 0.2)',
+  } as ViewStyle,
+  nitroEyebrow: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: AppPalette.accent,
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+  } as TextStyle,
+  nitroTitle: {
+    marginTop: 8,
+    fontSize: 24,
+    fontWeight: '700',
+    color: AppPalette.text,
+  } as TextStyle,
+  nitroCopy: {
+    marginTop: 6,
+    fontSize: 14,
+    lineHeight: 20,
+    color: AppPalette.textMuted,
   } as TextStyle,
   // settingsText removed, replaced by icon
   listPadding: {
